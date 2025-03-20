@@ -10,13 +10,23 @@ def train_model(sam, train_loader, val_loader, device, epochs, learning_rate):
         sam.train()
         train_loss = 0
 
-        for images, masks in train_loader:
-            images, masks = images.to(device), masks.to(device)
+        for batch in train_loader:
+            images = batch["image"].to(device)
+            masks = batch["mask"].to(device)
+            original_sizes = batch["original_size"]  # Keep this as metadata
 
-            batched_input = [{"image": img} for img in images]  # Convert images into the expected format
+            # Create batched_input with original_size included
+            batched_input = [
+                {"image": img, "original_size": orig_size} 
+                for img, orig_size in zip(images, original_sizes)
+            ]
+
             outputs = sam(batched_input, multimask_output=False)
 
-            loss = criterion(outputs, masks)
+            # Extract model predictions
+            predicted_masks = torch.stack([out["masks"] for out in outputs]).squeeze(1)  # Shape: (B, H, W)
+
+            loss = criterion(predicted_masks, masks)
 
             optimizer.zero_grad()
             loss.backward()
@@ -32,10 +42,20 @@ def validate_model(sam, val_loader, device, criterion):
     val_loss = 0
 
     with torch.no_grad():
-        for images, masks in val_loader:
-            images, masks = images.to(device), masks.to(device)
-            outputs = sam(images)
-            loss = criterion(outputs, masks)
+        for batch in val_loader:
+            images = batch["image"].to(device)
+            masks = batch["mask"].to(device)
+            original_sizes = batch["original_size"]
+
+            batched_input = [
+                {"image": img, "original_size": orig_size} 
+                for img, orig_size in zip(images, original_sizes)
+            ]
+
+            outputs = sam(batched_input, multimask_output=False)
+            predicted_masks = torch.stack([out["masks"] for out in outputs]).squeeze(1)
+
+            loss = criterion(predicted_masks, masks)
             val_loss += loss.item()
 
     print(f"Validation Loss: {val_loss/len(val_loader):.4f}")

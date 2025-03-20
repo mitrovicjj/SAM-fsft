@@ -26,9 +26,14 @@ class RetinaDataset(Dataset):
 
         image = Image.open(image_path).convert('RGB')
         mask = Image.open(mask_path).convert('L')
+        original_size = image.size
 
         if self.transform:
             image = self.transform(image)
-            mask = self.transform(mask)
+            mask = transforms.ToTensor()(mask)
 
-        return image, mask
+        return {
+            'image': image,
+            'mask': mask,
+            'original_size': original_size
+        }
