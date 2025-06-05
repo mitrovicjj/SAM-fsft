@@ -3,4 +3,5 @@ myenv/Lib/site-packages/torch/lib/dnnl.lib
 sam_vit_b_01ec64.pth
 data/
 myenv/
-DRIVE/
+.vscode/
+__pycache__/
