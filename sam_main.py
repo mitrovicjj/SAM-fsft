@@ -2,7 +2,7 @@ import argparse
 import torch
 from utils import prepare_dataloaders
 from model import load_model
-from train import train_model
+from sam_train import train_model
 from evaluate import visualize_results
 
 if __name__ == "__main__":
@@ -16,14 +16,10 @@ if __name__ == "__main__":
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    # Prepare data loaders
     train_loader, val_loader = prepare_dataloaders(args.data_dir, args.batch_size)
 
-    # Load SAM model
     sam = load_model(args.checkpoint, device)
 
-    # Train the model
     train_model(sam, train_loader, val_loader, device, args.epochs, args.learning_rate)
 
-    # Visualize results
     visualize_results(sam, val_loader, device)

@@ -7,17 +7,19 @@ def prepare_dataloaders(data_dir, batch_size):
 
     train_dataset = RetinaDataset(
         image_dir=os.path.join(data_dir, "train/images"),
-        mask_dir=os.path.join(data_dir, "train/mask"),
+        mask_dir=os.path.join(data_dir, "train/masks"),
+        fov_dir=os.path.join(data_dir, "train/fov"),
         transform=transform
     )
 
-    val_dataset = RetinaDataset(
-        image_dir=os.path.join(data_dir, "val/images"),
-        mask_dir=os.path.join(data_dir, "val/mask"),
+    test_dataset = RetinaDataset(
+        image_dir=os.path.join(data_dir, "test/images"),
+        mask_dir=os.path.join(data_dir, "test/masks"),
+        fov_dir=os.path.join(data_dir, "test/fov"),
         transform=transform
     )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, val_loader
+    return train_loader, test_loader
