@@ -5,9 +5,9 @@ from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-def get_transforms():
+def get_transforms(size=256):
     return A.Compose([
-        A.Resize(1024, 1024),
+        A.Resize(size, size),
         A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
         ToTensorV2()
     ])
