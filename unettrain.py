@@ -16,29 +16,65 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
     scaler = torch.cuda.amp.GradScaler()
     writer = SummaryWriter(log_dir=log_dir)
     best_iou = 0.0
-    base_image_size = 256
+    base_image_size = 1024
     accumulation_steps = 4
     os.makedirs("checkpoints", exist_ok=True)
+    
+
+    def ensure_4d(t, like):
+  
+        if t.dim() == 2:             # H, W → 1, 1, H, W
+            t = t.unsqueeze(0).unsqueeze(0)
+        elif t.dim() == 3:           # (B or C), H, W  →       add missing dim
+            if t.size(0) == like.size(-2):   # heuristic: treat leading dim as C
+                t = t.unsqueeze(0)           #   add batch
+            else:
+                t = t.unsqueeze(1)           #   add channel
+        # At this point t is [B, 1, H, W] or [B, C, H, W]
+        if t.size(1) == 1:          # replicate channel to 3
+            t = t.repeat(1, 3, 1, 1)
+        return t
+
+
+    def debug_log_images(images, masks, preds, epoch, tag="Validation"):
+        print(f"Type masks before log_images: {type(masks)}, shape: {getattr(masks, 'shape', None)}")
+        print(f"Type preds before log_images: {type(preds)}, shape: {getattr(preds, 'shape', None)}")
+        return log_images(images, masks, preds, epoch, tag)
 
     def log_images(images, masks, preds, epoch, tag="Validation"):
-        
-        # TensorBoard’s add_image expects CPU tensors. 
-        # It can’t handle CUDA tensors directly.
-        images = images.cpu()
-        masks = masks.cpu()
-        preds = preds.cpu()
+          """
+          Robust logger that works for any combination of 2‑D, 3‑D, or 4‑D tensors.
+          All three tensors come out as [B, 3, H, W] on CPU.
+          """
 
-        print(f"images.shape: {images.shape}")
-        print(f"masks.shape: {masks.shape}")
-        print(f"preds.shape: {preds.shape}")
+          def _prep(t, name):
+              print(f"{name} IN  shape={tuple(t.shape)}  dim={t.dim()}")
 
-        if masks.dim() == 3:
-            masks = masks.unsqueeze(1)
-        if preds.dim() == 3:
-            preds = preds.unsqueeze(1)
+              t = t.detach().cpu()       # (no grad, move-to‑CPU)
+              if t.dim() == 2:           # H, W → 1,1,H,W
+                  t = t.unsqueeze(0).unsqueeze(0)
+              elif t.dim() == 3:         # could be C,H,W  or B,H,W
+                  if t.size(0) in (1, 3):        # looks like C,H,W
+                      t = t.unsqueeze(0)         # add batch
+                  else:                          # looks like B,H,W
+                      t = t.unsqueeze(1)         # add channel
+              elif t.dim() != 4:
+                  raise ValueError(f"Unexpected ndim {t.dim()} in {name}")
 
-        grid = make_grid(torch.cat([images, masks, preds], dim=0), nrow=images.size(0))
-        writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
+              # ensure 3 channels so cat() along batch works later
+              if t.size(1) == 1:
+                  t = t.repeat(1, 3, 1, 1)
+
+              print(f"{name} OUT shape={tuple(t.shape)}  dim={t.dim()}")
+              return t.float()           # TensorBoard dislikes bool
+
+          img4   = _prep(images, "images")
+          mask4  = _prep(masks,  "masks")
+          pred4  = _prep(preds,   "preds")
+
+          grid = make_grid(torch.cat([img4, mask4, pred4], dim=0),
+                          nrow=img4.size(0))
+          writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
 
     def attempt_training(batch_size, image_size):
         print(f"\n Starting training: batch_size={batch_size}, image_size={image_size}")
@@ -109,7 +145,8 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
                             pred_mask.save(f"{pred_dir}/img_{idx}_{i}_pred.png")
 
                         if not vis_logged:
-                            log_images(image, mask, preds, epoch)
+                            preds = torch.sigmoid(output) > 0.5  # fresh preds
+                            debug_log_images(image, mask, preds, epoch)
                             vis_logged = True
 
             avg_dice = sum(dice_scores) / len(dice_scores)
