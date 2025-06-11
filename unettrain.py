@@ -9,16 +9,17 @@ from datasets import prepare_dataloaders, get_transforms
 from metrics import dice_loss, iou_score
 import torchvision.transforms.functional as TF
 from PIL import Image
+from torch.utils.checkpoint import checkpoint_sequential
 
 def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_dir='runs/unet'):
     scaler = torch.cuda.amp.GradScaler()
     writer = SummaryWriter(log_dir=log_dir)
     best_iou = 0.0
     base_image_size = 1024
+    accumulation_steps = 4
     os.makedirs("checkpoints", exist_ok=True)
 
     def log_images(images, masks, preds, epoch, tag="Validation"):
-        """Log image/mask/pred triplets to TensorBoard."""
         images = images.cpu()
         masks = masks.cpu()
         preds = preds.cpu()
@@ -37,26 +38,30 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
             print(f"\n🔁 Epoch {epoch+1}/{epochs}")
             model.train()
             epoch_loss = 0
+            optimizer.zero_grad()
 
-            for batch in tqdm(train_loader, desc="🧠 Training"):
+            for step, batch in enumerate(tqdm(train_loader, desc="Training")):
                 image, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
                 if fov is not None:
                     fov = fov.to(device)
 
-                optimizer.zero_grad()
                 with torch.cuda.amp.autocast():
                     output = model(image)
-                    loss = dice_loss(output, mask, fov)
+                    loss = dice_loss(output, mask, fov) / accumulation_steps
 
                 scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-                epoch_loss += loss.item()
+
+                if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
+                epoch_loss += loss.item() * accumulation_steps
 
             avg_train_loss = epoch_loss / len(train_loader)
             writer.add_scalar("Loss/train", avg_train_loss, epoch)
 
-            # --- Validation ---
+            # Validation
             model.eval()
             dice_scores, ious = []
             vis_logged = False
@@ -64,7 +69,7 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
             os.makedirs(pred_dir, exist_ok=True)
 
             with torch.no_grad():
-                for idx, batch in enumerate(tqdm(val_loader, desc="🧪 Validating")):
+                for idx, batch in enumerate(tqdm(val_loader, desc="Validating")):
                     image, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
                     if fov is not None:
                         fov = fov.to(device)
@@ -77,10 +82,8 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
                     dice_scores.append(dice.item())
                     ious.append(iou.item())
 
-                    
                     if idx < 5:
                         preds = torch.sigmoid(output) > 0.5
-
                         for i in range(image.size(0)):
                             input_img = TF.to_pil_image(image[i].cpu())
                             true_mask = TF.to_pil_image(mask[i].cpu())
@@ -109,7 +112,6 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
 
             torch.cuda.empty_cache()
 
-    # Retry with smaller batch/image size if OOM
     current_batch = batch_size
     current_size = base_image_size
 
