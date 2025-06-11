@@ -16,7 +16,7 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
     scaler = torch.cuda.amp.GradScaler()
     writer = SummaryWriter(log_dir=log_dir)
     best_iou = 0.0
-    base_image_size = 1024
+    base_image_size = 256
     accumulation_steps = 4
     os.makedirs("checkpoints", exist_ok=True)
 
