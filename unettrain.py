@@ -13,14 +13,7 @@ from PIL import Image
 from torch.utils.checkpoint import checkpoint_sequential
 
 
-def train_model(
-    data_dir: str,
-    epochs: int = 50,
-    batch_size: int = 4,
-    lr: float = 1e-4,
-    device: str = "cuda",
-    log_dir: str = "runs/unet",
-):
+def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/unet'):
     """Top‑level training entry point.
 
     Args:
@@ -35,7 +28,7 @@ def train_model(
     # === Set‑up ===
     scaler = torch.amp.GradScaler(device)  # new API (torch>=2.3)
     writer = SummaryWriter(log_dir=log_dir)
-    best_iou: float = -1.0
+    best_iou = -1.0  # <-- removed the ": float" annotation here
 
     base_image_size = 256
     accumulation_steps = 4
