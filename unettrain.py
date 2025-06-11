@@ -21,9 +21,22 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
     os.makedirs("checkpoints", exist_ok=True)
 
     def log_images(images, masks, preds, epoch, tag="Validation"):
+        
+        # TensorBoard’s add_image expects CPU tensors. 
+        # It can’t handle CUDA tensors directly.
         images = images.cpu()
         masks = masks.cpu()
         preds = preds.cpu()
+
+        print(f"images.shape: {images.shape}")
+        print(f"masks.shape: {masks.shape}")
+        print(f"preds.shape: {preds.shape}")
+
+        if masks.dim() == 3:
+            masks = masks.unsqueeze(1)
+        if preds.dim() == 3:
+            preds = preds.unsqueeze(1)
+
         grid = make_grid(torch.cat([images, masks, preds], dim=0), nrow=images.size(0))
         writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
 
