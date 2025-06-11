@@ -12,177 +12,178 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 from torch.utils.checkpoint import checkpoint_sequential
 
-def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_dir='runs/unet'):
-    scaler = torch.cuda.amp.GradScaler()
+
+def train_model(
+    data_dir: str,
+    epochs: int = 50,
+    batch_size: int = 4,
+    lr: float = 1e-4,
+    device: str = "cuda",
+    log_dir: str = "runs/unet",
+):
+    """Top‑level training entry point.
+
+    Args:
+        data_dir: Root folder with `train` and `val` subfolders.
+        epochs: Number of epochs for each resolution stage.
+        batch_size: Initial batch size (auto‑downscales on OOM).
+        lr: Adam learning rate.
+        device: "cuda" or "cpu".
+        log_dir: TensorBoard run directory.
+    """
+
+    # === Set‑up ===
+    scaler = torch.amp.GradScaler(device)  # new API (torch>=2.3)
     writer = SummaryWriter(log_dir=log_dir)
-    best_iou = 0.0
-    base_image_size = 1024
+    best_iou: float = -1.0
+
+    base_image_size = 256
     accumulation_steps = 4
     os.makedirs("checkpoints", exist_ok=True)
-    
 
-    def ensure_4d(t, like):
-  
-        if t.dim() == 2:             # H, W → 1, 1, H, W
-            t = t.unsqueeze(0).unsqueeze(0)
-        elif t.dim() == 3:           # (B or C), H, W  →       add missing dim
-            if t.size(0) == like.size(-2):   # heuristic: treat leading dim as C
-                t = t.unsqueeze(0)           #   add batch
-            else:
-                t = t.unsqueeze(1)           #   add channel
-        # At this point t is [B, 1, H, W] or [B, C, H, W]
-        if t.size(1) == 1:          # replicate channel to 3
-            t = t.repeat(1, 3, 1, 1)
-        return t
+    # ------------------------------------------------------------------
+    # Helper: robust image logger
+    # ------------------------------------------------------------------
+    def log_images(images, masks, preds, epoch, tag: str = "Validation"):
+        """Logs a grid `[img | mask | pred]` for TensorBoard.
 
+        Accepts 2‑D, 3‑D or 4‑D tensors in *any* combination and forces them to
+        `[B, 3, H, W]` before concatenation to avoid shape/size errors.
+        """
 
-    def debug_log_images(images, masks, preds, epoch, tag="Validation"):
-        print(f"Type masks before log_images: {type(masks)}, shape: {getattr(masks, 'shape', None)}")
-        print(f"Type preds before log_images: {type(preds)}, shape: {getattr(preds, 'shape', None)}")
-        return log_images(images, masks, preds, epoch, tag)
+        def _prep(t: torch.Tensor, name: str) -> torch.Tensor:
+            t = t.detach().cpu()
+            if t.dim() == 2:  # H, W → 1, 1, H, W
+                t = t.unsqueeze(0).unsqueeze(0)
+            elif t.dim() == 3:  # C, H, W  *or*  B, H, W
+                if t.size(0) in (1, 3):  # heuristically treat as C, H, W
+                    t = t.unsqueeze(0)
+                else:  # treat as B, H, W
+                    t = t.unsqueeze(1)
+            elif t.dim() != 4:
+                raise ValueError(f"Unexpected ndim {t.dim()} in {name}")
 
-    def log_images(images, masks, preds, epoch, tag="Validation"):
-          """
-          Robust logger that works for any combination of 2‑D, 3‑D, or 4‑D tensors.
-          All three tensors come out as [B, 3, H, W] on CPU.
-          """
+            if t.size(1) == 1:  # replicate gray → RGB so dim‑1 matches
+                t = t.repeat(1, 3, 1, 1)
+            return t.float()
 
-          def _prep(t, name):
-              print(f"{name} IN  shape={tuple(t.shape)}  dim={t.dim()}")
+        img4 = _prep(images, "images")
+        mask4 = _prep(masks, "masks")
+        pred4 = _prep(preds, "preds")
 
-              t = t.detach().cpu()       # (no grad, move-to‑CPU)
-              if t.dim() == 2:           # H, W → 1,1,H,W
-                  t = t.unsqueeze(0).unsqueeze(0)
-              elif t.dim() == 3:         # could be C,H,W  or B,H,W
-                  if t.size(0) in (1, 3):        # looks like C,H,W
-                      t = t.unsqueeze(0)         # add batch
-                  else:                          # looks like B,H,W
-                      t = t.unsqueeze(1)         # add channel
-              elif t.dim() != 4:
-                  raise ValueError(f"Unexpected ndim {t.dim()} in {name}")
+        grid = make_grid(torch.cat([img4, mask4, pred4], dim=0), nrow=img4.size(0))
+        writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
 
-              # ensure 3 channels so cat() along batch works later
-              if t.size(1) == 1:
-                  t = t.repeat(1, 3, 1, 1)
+    # ------------------------------------------------------------------
+    # Inner training routine (allows automatic resolution / BS fallback)
+    # ------------------------------------------------------------------
+    def attempt_training(current_bs: int, image_size: int):
+        nonlocal best_iou  # <-- allow write access to the outer variable
 
-              print(f"{name} OUT shape={tuple(t.shape)}  dim={t.dim()}")
-              return t.float()           # TensorBoard dislikes bool
-
-          img4   = _prep(images, "images")
-          mask4  = _prep(masks,  "masks")
-          pred4  = _prep(preds,   "preds")
-
-          grid = make_grid(torch.cat([img4, mask4, pred4], dim=0),
-                          nrow=img4.size(0))
-          writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
-
-    def attempt_training(batch_size, image_size):
-        print(f"\n Starting training: batch_size={batch_size}, image_size={image_size}")
+        print(f"\n➤ Starting training: batch_size={current_bs}, image_size={image_size}")
         transform = get_transforms(image_size)
-        train_loader, val_loader = prepare_dataloaders(data_dir, batch_size, transform)
+        train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, transform)
 
         model = UNet(n_channels=3, n_classes=1).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         for epoch in range(epochs):
-            print(f"\n🔁 Epoch {epoch+1}/{epochs}")
+            # Train
+            print(f"\n🔁 Epoch {epoch + 1}/{epochs}")
             model.train()
-            epoch_loss = 0
+            cum_loss = 0.0
             optimizer.zero_grad()
 
             for step, batch in enumerate(tqdm(train_loader, desc="Training")):
-                image, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
-                if fov is not None:
-                    fov = fov.to(device)
+                img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
+                fov = fov.to(device) if fov is not None else None
 
-                with torch.cuda.amp.autocast():
-                    output = model(image)
-                    loss = dice_loss(output, mask, fov) / accumulation_steps
+                with torch.amp.autocast(device_type=device):
+                    out = model(img)
+                    loss = dice_loss(out, mask, fov) / accumulation_steps
 
                 scaler.scale(loss).backward()
 
+                # Gradient accumulation
                 if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad()
 
-                epoch_loss += loss.item() * accumulation_steps
+                cum_loss += loss.item() * accumulation_steps
 
-            avg_train_loss = epoch_loss / len(train_loader)
+            avg_train_loss = cum_loss / len(train_loader)
             writer.add_scalar("Loss/train", avg_train_loss, epoch)
 
             # Validation
             model.eval()
-            dice_scores = []
-            ious = []
+            dice_scores, ious = [], []
             vis_logged = False
-            pred_dir = f"predictions/epoch_{epoch+1}"
+            pred_dir = f"predictions/epoch_{epoch + 1}"
             os.makedirs(pred_dir, exist_ok=True)
 
             with torch.no_grad():
                 for idx, batch in enumerate(tqdm(val_loader, desc="Validating")):
-                    image, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
-                    if fov is not None:
-                        fov = fov.to(device)
+                    img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
+                    fov = fov.to(device) if fov is not None else None
 
-                    with torch.cuda.amp.autocast():
-                        output = model(image)
-                        dice = 1 - dice_loss(output, mask, fov)
-                        iou = iou_score(output, mask, fov)
+                    with torch.amp.autocast(device_type=device):
+                        out = model(img)
+                        dice = 1 - dice_loss(out, mask, fov)
+                        iou = iou_score(out, mask, fov)
 
                     dice_scores.append(dice.item())
                     ious.append(iou.item())
 
+                    # Save first few predictions for qualitative check
                     if idx < 5:
-                        preds = torch.sigmoid(output) > 0.5
-                        for i in range(image.size(0)):
-                            input_img = TF.to_pil_image(image[i].cpu())
-                            true_mask = TF.to_pil_image(mask[i].cpu())
-                            pred_mask = TF.to_pil_image(preds[i].float().cpu())
-
-                            input_img.save(f"{pred_dir}/img_{idx}_{i}_input.png")
-                            true_mask.save(f"{pred_dir}/img_{idx}_{i}_mask.png")
-                            pred_mask.save(f"{pred_dir}/img_{idx}_{i}_pred.png")
+                        preds = torch.sigmoid(out) > 0.5
+                        for i in range(img.size(0)):
+                            TF.to_pil_image(img[i].cpu()).save(f"{pred_dir}/img_{idx}_{i}_input.png")
+                            TF.to_pil_image(mask[i].cpu()).save(f"{pred_dir}/img_{idx}_{i}_mask.png")
+                            TF.to_pil_image(preds[i].float().cpu()).save(f"{pred_dir}/img_{idx}_{i}_pred.png")
 
                         if not vis_logged:
-                            preds = torch.sigmoid(output) > 0.5  # fresh preds
-                            debug_log_images(image, mask, preds, epoch)
+                            log_images(img, mask, preds, epoch)
                             vis_logged = True
 
             avg_dice = sum(dice_scores) / len(dice_scores)
             avg_iou = sum(ious) / len(ious)
-
             writer.add_scalar("Dice/val", avg_dice, epoch)
             writer.add_scalar("IoU/val", avg_iou, epoch)
 
-            print(f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f}")
+            print(
+                f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f}"
+            )
 
+            # ---------------- Checkpointing ------------------
             if avg_iou > best_iou:
                 best_iou = avg_iou
-                torch.save(model.state_dict(), f"checkpoints/unet_best.pth")
+                torch.save(model.state_dict(), "checkpoints/unet_best.pth")
                 print("✅ Saved new best model.")
 
             torch.cuda.empty_cache()
 
-    current_batch = batch_size
-    current_size = base_image_size
-
+    # ------------------------------------------------------------------
+    # Progressive resizing / OOM recovery loop
+    # ------------------------------------------------------------------
+    cur_bs, cur_size = batch_size, base_image_size
     while True:
         try:
-            attempt_training(current_batch, current_size)
+            attempt_training(cur_bs, cur_size)
             break
         except RuntimeError as e:
             if "CUDA out of memory" in str(e):
-                print(f"\n OOM: batch_size={current_batch}, image_size={current_size}")
+                print(f"\n⚠️  OOM at bs={cur_bs}, img={cur_size}. Retrying...")
                 torch.cuda.empty_cache()
-                if current_batch > 1:
-                    current_batch = max(1, current_batch // 2)
-                elif current_size > 256:
-                    current_size = current_size // 2
+                if cur_bs > 1:
+                    cur_bs = max(1, cur_bs // 2)
+                elif cur_size > 256:
+                    cur_size //= 2
                 else:
                     raise RuntimeError("Cannot recover from OOM: batch_size=1 and image_size=256 failed")
-                print(f"🔁 Retrying with batch_size={current_batch}, image_size={current_size}")
+                print(f"🔁 New attempt: bs={cur_bs}, img={cur_size}")
             else:
-                raise e
+                raise
 
     writer.close()
