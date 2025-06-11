@@ -64,7 +64,8 @@ def train_model(data_dir, epochs=50, batch_size=4, lr=1e-4, device='cuda', log_d
 
             # Validation
             model.eval()
-            dice_scores, ious = []
+            dice_scores = []
+            ious = []
             vis_logged = False
             pred_dir = f"predictions/epoch_{epoch+1}"
             os.makedirs(pred_dir, exist_ok=True)
