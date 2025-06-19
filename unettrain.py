@@ -4,43 +4,50 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
 from tqdm import tqdm
-from unetmodel import UNet
 from datasets import get_transforms, RetinaDataset
 from utils import prepare_dataloaders
 from metrics import dice_loss, iou_score
 import torchvision.transforms.functional as TF
 from PIL import Image
 from torch.utils.checkpoint import checkpoint_sequential
+import datetime
+import yaml
+
+def train_model(data_dir, config, device='cuda'):
+
+    # set up timestamped experiment folder
+    exp_name = config.get("experiment_name", "unet_exp")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    run_dir = os.path.join("runs", f"{exp_name}_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+
+    writer = SummaryWriter(log_dir=run_dir)
+    for key, value in config.items():
+        writer.add_text(f"config/{key}", str(value))
+    scaler = torch.amp.GradScaler(device)
+    best_iou = -1.0
+
+    config_path = os.path.join(run_dir, "config_snapshot.yaml")
+    with open(config_path, "w") as f:
+        yaml.dump(config, f)
+    
+    pred_base_dir = os.path.join(run_dir, "predictions")
+    ckpt_dir = os.path.join(run_dir, "checkpoints")
+    os.makedirs(pred_base_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
 
 
-def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/unet'):
-    """Top‑level training entry point.
+    epochs = config["epochs"]
+    base_image_size = config.get("base_image_size", 256)
+    batch_size = config["batch_size"]
+    lr = config["learning_rate"]
+    accumulation_steps = config.get("accumulation_steps", 4)
+  
 
-    Args:
-        data_dir: Root folder with `train` and `val` subfolders.
-        epochs: Number of epochs for each resolution stage.
-        batch_size: Initial batch size (auto‑downscales on OOM).
-        lr: Adam learning rate.
-        device: "cuda" or "cpu".
-        log_dir: TensorBoard run directory.
-    """
-
-    # === Set‑up ===
-    scaler = torch.amp.GradScaler(device)  # new API (torch>=2.3)
-    writer = SummaryWriter(log_dir=log_dir)
-    best_iou = -1.0  # <-- removed the ": float" annotation here
-
-    base_image_size = 256
-    accumulation_steps = 4
-    os.makedirs("checkpoints", exist_ok=True)
-
-    # ------------------------------------------------------------------
-    # Helper: robust image logger
-    # ------------------------------------------------------------------
     def log_images(images, masks, preds, epoch, tag: str = "Validation"):
         """Logs a grid `[img | mask | pred]` for TensorBoard.
 
-        Accepts 2‑D, 3‑D or 4‑D tensors in *any* combination and forces them to
+        Accepts 2‑D, 3‑D or 4‑D tensors in any combination and forces them to
         `[B, 3, H, W]` before concatenation to avoid shape/size errors.
         """
 
@@ -56,7 +63,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
             elif t.dim() != 4:
                 raise ValueError(f"Unexpected ndim {t.dim()} in {name}")
 
-            if t.size(1) == 1:  # replicate gray → RGB so dim‑1 matches
+            if t.size(1) == 1:  # replicate gray to RGB so dim‑1 matches
                 t = t.repeat(1, 3, 1, 1)
             return t.float()
 
@@ -67,9 +74,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
         grid = make_grid(torch.cat([img4, mask4, pred4], dim=0), nrow=img4.size(0))
         writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
 
-    # ------------------------------------------------------------------
-    # Inner training routine (allows automatic resolution / BS fallback)
-    # ------------------------------------------------------------------
+    # inner training routine
     def attempt_training(current_bs: int, image_size: int):
         nonlocal best_iou  # <-- allow write access to the outer variable
 
@@ -77,11 +82,23 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
         transform = get_transforms(image_size)
         train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, transform)
 
-        model = UNet(n_channels=3, n_classes=1).to(device)
+        if config["model_name"] == "unet":
+            from unetmodel import UNet
+            model = UNet(n_channels=3, n_classes=1).to(device)
+        elif config["model_name"] == "segformer":
+            from transformers import SegformerForSemanticSegmentation
+            model = SegformerForSemanticSegmentation.from_pretrained(
+                f"nvidia/mit-{config.get('segformer_variant', 'b0')}",
+                num_labels=1,
+                ignore_mismatched_sizes=True
+            ).to(device)
+        else:
+            raise ValueError(f"Unknown model: {config['model_name']}")
+
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         for epoch in range(epochs):
-            # Train
+            # train
             print(f"\n🔁 Epoch {epoch + 1}/{epochs}")
             model.train()
             cum_loss = 0.0
@@ -97,7 +114,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
 
                 scaler.scale(loss).backward()
 
-                # Gradient accumulation
+                # gradient accumulation
                 if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
                     scaler.step(optimizer)
                     scaler.update()
@@ -108,11 +125,11 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
             avg_train_loss = cum_loss / len(train_loader)
             writer.add_scalar("Loss/train", avg_train_loss, epoch)
 
-            # Validation
+            # validation
             model.eval()
             dice_scores, ious = [], []
             vis_logged = False
-            pred_dir = f"predictions/epoch_{epoch + 1}"
+            pred_dir = os.path.join(pred_base_dir, f"epoch_{epoch + 1}")
             os.makedirs(pred_dir, exist_ok=True)
 
             with torch.no_grad():
@@ -128,7 +145,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
                     dice_scores.append(dice.item())
                     ious.append(iou.item())
 
-                    # Save first few predictions for qualitative check
+                    # qualitative check
                     if idx < 5:
                         preds = torch.sigmoid(out) > 0.5
                         for i in range(img.size(0)):
@@ -149,17 +166,16 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
                 f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f}"
             )
 
-            # ---------------- Checkpointing ------------------
+            # checkpointing
             if avg_iou > best_iou:
                 best_iou = avg_iou
-                torch.save(model.state_dict(), "checkpoints/unet_best.pth")
+                best_ckpt_path = os.path.join(ckpt_dir, "unet_best.pth")
+                torch.save(model.state_dict(), best_ckpt_path)
                 print("✅ Saved new best model.")
 
             torch.cuda.empty_cache()
 
-    # ------------------------------------------------------------------
-    # Progressive resizing / OOM recovery loop
-    # ------------------------------------------------------------------
+    # progressive resizing / OOM recovery loop
     cur_bs, cur_size = batch_size, base_image_size
     while True:
         try:

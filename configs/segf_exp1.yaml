@@ -1,0 +1,20 @@
+# Experiment metadata
+experiment_name: unet_exp1
+model_name: segformer
+segformer_variant: b0            # options: "unet", "segformer", "sam" (for zero-shot)
+seed: 42
+
+# Training settings
+epochs: 20
+batch_size: 8
+learning_rate: 0.0003
+accumulation_steps: 4
+
+# Image settings
+base_image_size: 256
+resize_mode: "center_crop"     # options: "resize", "center_crop", "pad"
+augmentation: true
+
+# Paths
+data_dir: "data/DRIVE"
+output_root: "runs"

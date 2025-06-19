@@ -25,8 +25,8 @@ dataset = RetinaDataset(
 loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 for i, batch in enumerate(tqdm(loader)):
-    img = batch['image'].squeeze(0)    # [3, 1024, 1024]
-    mask = batch['mask'].squeeze(0)    # [1, 1024, 1024] → [1024, 1024]
+    img = batch['image'].squeeze(0)
+    mask = batch['mask'].squeeze(0)
     fov = batch['fov'].squeeze(0)
 
     sample = {
