@@ -8,7 +8,7 @@ from albumentations.pytorch import ToTensorV2
 def get_transforms(size=256):
     return A.Compose([
         A.Resize(size, size),
-        A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2()
     ])
 
@@ -29,6 +29,7 @@ class RetinaDataset(Dataset):
     def __getitem__(self, idx):
         image_path = os.path.join(self.image_dir, self.image_files[idx])
         mask_path = os.path.join(self.mask_dir, self.mask_files[idx])
+
         image = np.array(Image.open(image_path).convert("RGB"))
         mask = np.array(Image.open(mask_path).convert("L"))
         fov = None
@@ -37,6 +38,8 @@ class RetinaDataset(Dataset):
         if self.fov_dir:
             fov_path = os.path.join(self.fov_dir, self.fov_files[idx])
             fov = np.array(Image.open(fov_path).convert("L"))
+
+            # Compose transform for fov as additional mask
             data = {"image": image, "mask": mask, "fov": fov}
             transform = A.Compose(
                 self.transform.transforms,
@@ -46,10 +49,10 @@ class RetinaDataset(Dataset):
             data = {"image": image, "mask": mask}
             transform = self.transform
 
-        
         if transform:
             transformed = transform(**data)
             image = transformed["image"]
+            # Convert mask and fov to binary float tensors
             mask = (transformed["mask"] > 0).float()
             if fov is not None:
                 fov = (transformed["fov"] > 0).float()
