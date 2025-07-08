@@ -45,10 +45,10 @@ def train_model(data_dir, config, device='cuda'):
   
 
     def log_images(images, masks, preds, epoch, tag: str = "Validation"):
-        """Logs a grid `[img | mask | pred]` for TensorBoard.
+        """Logs a grid [img | mask | pred] for TensorBoard.
 
         Accepts 2‑D, 3‑D or 4‑D tensors in any combination and forces them to
-        `[B, 3, H, W]` before concatenation to avoid shape/size errors.
+        [B, 3, H, W] before concatenation to avoid shape/size errors.
         """
 
         def _prep(t: torch.Tensor, name: str) -> torch.Tensor:
