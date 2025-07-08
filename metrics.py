@@ -42,6 +42,3 @@ def iou_score(pred, target, mask=None, threshold=0.5, eps=1e-6):
     intersection = (pred & target).float().sum(dim=1)
     union = (pred | target).float().sum(dim=1)
     return ((intersection + eps) / (union + eps)).mean()
-
-%load_ext tensorboard
-%tensorboard --logdir runs

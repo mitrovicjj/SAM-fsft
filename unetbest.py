@@ -1,4 +1,5 @@
 import os
+import yaml
 import torch
 from torch.utils.data import DataLoader
 from torchvision.transforms import functional as TF
@@ -22,10 +23,44 @@ def _prep_vis(t: torch.Tensor) -> torch.Tensor:
         t = t.repeat(1, 3, 1, 1)
     return t.float()
 
-def test_model(data_dir, checkpoint_path, batch_size=1, image_size=256,
-               device="cuda", save_predictions=True, output_dir="output/testing_preds",
-               log_dir=None):
+def test_model(run_dir, data_dir, checkpoint_path=None,
+               batch_size=None, image_size=None, device="cuda",
+               save_predictions=True, output_dir=None, log_dir=None):
+
+    # Load config.yaml if batch_size or image_size not passed explicitly
+    if batch_size is None or image_size is None or (output_dir is None or log_dir is None):
+        config_path = os.path.join(run_dir, "config.yaml")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = yaml.safe_load(f)
+            if batch_size is None:
+                batch_size = config.get("batch_size", 1)
+            if image_size is None:
+                image_size = config.get("base_image_size", 256)
+            if output_dir is None:
+                output_dir = os.path.join(run_dir, "test_predictions")
+            if log_dir is None:
+                log_dir = os.path.join(run_dir, "tensorboard_test")
+        else:
+            print(f"Warning: config.yaml not found in {run_dir}, using defaults or provided args.")
+            batch_size = batch_size or 1
+            image_size = image_size or 256
+            output_dir = output_dir or "output/testing_preds"
+            log_dir = log_dir or None
     
+    if checkpoint_path is None:
+        checkpoint_path = os.path.join(run_dir, "checkpoints", "unet_best.pth")
+
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+
+    print(f"Testing model from checkpoint: {checkpoint_path}")
+    print(f"Data directory: {data_dir}")
+    print(f"Batch size: {batch_size}, Image size: {image_size}")
+    print(f"Saving predictions to: {output_dir}")
+    if log_dir:
+        print(f"TensorBoard logs directory: {log_dir}")
+
     os.makedirs(output_dir, exist_ok=True)
     writer = SummaryWriter(log_dir) if log_dir else None
 

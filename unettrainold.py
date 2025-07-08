@@ -9,21 +9,24 @@ from datasets import get_transforms, RetinaDataset
 from utils import prepare_dataloaders
 from metrics import dice_loss, iou_score
 import torchvision.transforms.functional as TF
-from PIL import Image
-from torch.utils.checkpoint import checkpoint_sequential
+import yaml
+import time
+from datetime import datetime
 
 
-def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/unet'):
-    """Top‑level training entry point.
+def train_model(data_dir, epochs, batch_size, lr, device='cuda'):
+    """Top‑level training entry point with config tracking and versioned checkpoints."""
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"unet_bs{batch_size}_lr{lr}_ep{epochs}_{timestamp}"
+    run_dir = os.path.join("runs", run_id)
+    ckpt_dir = os.path.join(run_dir, "checkpoints")
+    pred_base = os.path.join(run_dir, "predictions")
+    log_dir = os.path.join(run_dir, "tensorboard")
 
-    Args:
-        data_dir: Root folder with train and val subfolders.
-        epochs: Number of epochs for each resolution stage.
-        batch_size: Initial batch size (auto‑downscales on OOM).
-        lr: Adam learning rate.
-        device: "cuda" or "cpu".
-        log_dir: TensorBoard run directory.
-    """
+    os.makedirs(run_dir, exist_ok=True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+    os.makedirs(pred_base, exist_ok=True)
 
     scaler = torch.amp.GradScaler(device)
     writer = SummaryWriter(log_dir=log_dir)
@@ -31,29 +34,36 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
 
     base_image_size = 256
     accumulation_steps = 4
-    os.makedirs("checkpoints", exist_ok=True)
 
-    # Helper: robust image logger
+    # Save training config
+    config = {
+        "data_dir": data_dir,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "lr": lr,
+        "device": device,
+        "base_image_size": base_image_size,
+        "accumulation_steps": accumulation_steps,
+        "run_id": run_id,
+        "timestamp": timestamp,
+    }
+
+    with open(os.path.join(run_dir, "config.yaml"), "w") as f:
+        yaml.dump(config, f)
+
     def log_images(images, masks, preds, epoch, tag: str = "Validation"):
-        """Logs a grid [img | mask | pred] for TensorBoard.
-
-        Accepts 2‑D, 3‑D or 4‑D tensors in *any* combination and forces them to
-        [B, 3, H, W] before concatenation to avoid shape/size errors.
-        """
-
         def _prep(t: torch.Tensor, name: str) -> torch.Tensor:
             t = t.detach().cpu()
-            if t.dim() == 2:  # H, W → 1, 1, H, W
+            if t.dim() == 2:
                 t = t.unsqueeze(0).unsqueeze(0)
-            elif t.dim() == 3:  # C, H, W  *or*  B, H, W
-                if t.size(0) in (1, 3):  # heuristically treat as C, H, W
+            elif t.dim() == 3:
+                if t.size(0) in (1, 3):
                     t = t.unsqueeze(0)
-                else:  # treat as B, H, W
+                else:
                     t = t.unsqueeze(1)
             elif t.dim() != 4:
                 raise ValueError(f"Unexpected ndim {t.dim()} in {name}")
-
-            if t.size(1) == 1:  # replicate gray → RGB so dim‑1 matches
+            if t.size(1) == 1:
                 t = t.repeat(1, 3, 1, 1)
             return t.float()
 
@@ -63,7 +73,6 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
 
         grid = make_grid(torch.cat([img4, mask4, pred4], dim=0), nrow=img4.size(0))
         writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
-
 
     def attempt_training(current_bs: int, image_size: int):
         nonlocal best_iou
@@ -105,7 +114,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
             model.eval()
             dice_scores, ious = [], []
             vis_logged = False
-            pred_dir = f"predictions/epoch_{epoch + 1}"
+            pred_dir = os.path.join(pred_base, f"epoch_{epoch + 1}")
             os.makedirs(pred_dir, exist_ok=True)
 
             with torch.no_grad():
@@ -124,9 +133,9 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
                     if idx < 5:
                         preds = torch.sigmoid(out) > 0.5
                         for i in range(img.size(0)):
-                            TF.to_pil_image(img[i].cpu()).save(f"{pred_dir}/img_{idx}_{i}_input.png")
-                            TF.to_pil_image(mask[i].cpu()).save(f"{pred_dir}/img_{idx}_{i}_mask.png")
-                            TF.to_pil_image(preds[i].float().cpu()).save(f"{pred_dir}/img_{idx}_{i}_pred.png")
+                            TF.to_pil_image(img[i].cpu()).save(os.path.join(pred_dir, f"img_{idx}_{i}_input.png"))
+                            TF.to_pil_image(mask[i].cpu()).save(os.path.join(pred_dir, f"img_{idx}_{i}_mask.png"))
+                            TF.to_pil_image(preds[i].float().cpu()).save(os.path.join(pred_dir, f"img_{idx}_{i}_pred.png"))
 
                         if not vis_logged:
                             log_images(img, mask, preds, epoch)
@@ -137,15 +146,14 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
             writer.add_scalar("Dice/val", avg_dice, epoch)
             writer.add_scalar("IoU/val", avg_iou, epoch)
 
-            print(
-                f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f}"
-            )
+            print(f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f}")
 
             # Checkpointing
             if avg_iou > best_iou:
                 best_iou = avg_iou
-                torch.save(model.state_dict(), "checkpoints/unet_best.pth")
-                print("✅ Saved new best model.")
+                best_path = os.path.join(ckpt_dir, "unet_best.pth")
+                torch.save(model.state_dict(), best_path)
+                print(f"✅ Saved new best model to {best_path}")
 
             torch.cuda.empty_cache()
 
@@ -157,7 +165,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
             break
         except RuntimeError as e:
             if "CUDA out of memory" in str(e):
-                print(f"\n⚠️  OOM at bs={cur_bs}, img={cur_size}. Retrying...")
+                print(f"\nOOM at bs={cur_bs}, img={cur_size}. Retrying...")
                 torch.cuda.empty_cache()
                 if cur_bs > 1:
                     cur_bs = max(1, cur_bs // 2)
@@ -170,3 +178,5 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir='runs/u
                 raise
 
     writer.close()
+    print(f"\nTraining complete. Outputs saved to {run_dir}")
+    return run_dir
