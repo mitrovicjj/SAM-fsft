@@ -10,6 +10,13 @@ from metrics import dice_loss, iou_score
 from tqdm import tqdm
 from torchvision.utils import make_grid
 
+
+def unnormalize(imgs, mean, std):
+    mean = torch.tensor(mean).view(1, -1, 1, 1).to(imgs.device)
+    std = torch.tensor(std).view(1, -1, 1, 1).to(imgs.device)
+    imgs = imgs * std + mean
+    return imgs.clamp(0, 1)
+
 def _prep_vis(t: torch.Tensor) -> torch.Tensor:
     """tensor for visualization: [B, 3, H, W]."""
     if t.dim() == 2:
@@ -94,20 +101,24 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
             iou_scores.append(iou.item())
 
             preds = torch.sigmoid(out) > 0.5
+
             if save_predictions:
+                img_unnorm = unnormalize(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 for i in range(img.size(0)):
-                    TF.to_pil_image(img[i].cpu()).save(f"{output_dir}/img_{idx}_{i}_input.png")
+                    TF.to_pil_image(img_unnorm[i].cpu()).save(f"{output_dir}/img_{idx}_{i}_input.png")
                     TF.to_pil_image(mask[i].cpu()).save(f"{output_dir}/img_{idx}_{i}_mask.png")
                     TF.to_pil_image(preds[i].float().cpu()).save(f"{output_dir}/img_{idx}_{i}_pred.png")
 
             # Log batch to TensorBoard
             if writer and not vis_logged:
-                img_vis = _prep_vis(img)
+                img_unnorm = unnormalize(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                img_vis = _prep_vis(img_unnorm)
                 mask_vis = _prep_vis(mask)
                 pred_vis = _prep_vis(preds)
                 grid = make_grid(torch.cat([img_vis, mask_vis, pred_vis], dim=0), nrow=img.size(0))
                 writer.add_image("Test/image-mask-pred", grid, 0)
                 vis_logged = True
+
 
     mean_dice = sum(dice_scores) / len(dice_scores)
     mean_iou = sum(iou_scores) / len(iou_scores)

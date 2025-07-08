@@ -13,6 +13,18 @@ from metrics import dice_loss, iou_score
 import torchvision.transforms.functional as TF
 from PIL import Image
 
+def unnormalize(imgs, mean, std):
+    """
+    Unnormalize a batch of images (Tensor) normalized by mean/std.
+    imgs: Tensor [B, C, H, W]
+    mean, std: lists of length C
+    Returns: Tensor [B, C, H, W] in [0,1] range, clipped
+    """
+    mean = torch.tensor(mean).view(1, -1, 1, 1).to(imgs.device)
+    std = torch.tensor(std).view(1, -1, 1, 1).to(imgs.device)
+    imgs = imgs * std + mean
+    return imgs.clamp(0, 1)
+
 
 def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
     """Top-level training entry point.
@@ -61,6 +73,9 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
     # Helper: robust image logger
     # ------------------------------------------------------------------
     def log_images(images, masks, preds, epoch, tag: str = "Validation"):
+    # Unnormalize images for better visualization
+        images = unnormalize(images, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
         def _prep(t: torch.Tensor, name: str) -> torch.Tensor:
             t = t.detach().cpu()
             if t.dim() == 2:
@@ -77,8 +92,9 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
             return t.float()
 
         img4 = _prep(images, "images")
-        mask4 = _prep(masks, "masks")
-        pred4 = _prep(preds, "preds")
+        mask4 = _prep(masks.float(), "masks")  # ensure float type for masks
+        pred4 = _prep(preds.float(), "preds")  # ensure float type for preds
+
         grid = make_grid(torch.cat([img4, mask4, pred4], dim=0), nrow=img4.size(0))
         writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
 

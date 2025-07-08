@@ -5,3 +5,5 @@ Pillow
 matplotlib
 segment-anything
 tqdm
+transformers
+accelerate
