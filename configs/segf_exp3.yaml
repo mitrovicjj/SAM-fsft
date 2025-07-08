@@ -1,12 +1,12 @@
 # Experiment metadata
-experiment_name: segf_exp1
+experiment_name: segf_exp3
 model_name: segformer            # "unet", "segformer", "sam" (for zero-shot)
 segformer_variant: b0
 seed: 42
 
 # Training settings
 epochs: 20
-batch_size: 1
+batch_size: 8
 learning_rate: 0.0003
 accumulation_steps: 4
 
