@@ -50,3 +50,43 @@ def iou_score(pred, target, mask=None, threshold=0.5, eps=1e-6):
     intersection = (pred & target).float().sum(dim=1)
     union = (pred | target).float().sum(dim=1)
     return ((intersection + eps) / (union + eps)).mean()
+
+def precision_score(preds, targets, fov=None, threshold=0.5):
+    preds = (torch.sigmoid(preds) > threshold).float()
+    if preds.shape != targets.shape:
+        if targets.dim() == 3:
+            targets = targets.unsqueeze(1)
+    if fov is not None:
+        if fov.dim() == 3:
+            fov = fov.unsqueeze(1)
+        preds = preds * fov
+        targets = targets * fov
+
+    preds = preds.view(preds.size(0), -1)  # [B, N]
+    targets = targets.view(targets.size(0), -1)
+
+    tp = (preds * targets).sum(dim=1) # sample
+    fp = (preds * (1 - targets)).sum(dim=1)
+
+    precision = tp / (tp + fp + 1e-8)
+    return precision.mean() #batch
+
+def recall_score(preds, targets, fov=None, threshold=0.5):
+    preds = (torch.sigmoid(preds) > threshold).float()
+    if preds.shape != targets.shape:
+        if targets.dim() == 3:
+            targets = targets.unsqueeze(1)
+    if fov is not None:
+        if fov.dim() == 3:
+            fov = fov.unsqueeze(1)
+        preds = preds * fov
+        targets = targets * fov
+
+    preds = preds.view(preds.size(0), -1)
+    targets = targets.view(targets.size(0), -1)
+
+    tp = (preds * targets).sum(dim=1)
+    fn = ((1 - preds) * targets).sum(dim=1)
+
+    recall = tp / (tp + fn + 1e-8)
+    return recall.mean()

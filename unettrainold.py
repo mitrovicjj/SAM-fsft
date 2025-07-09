@@ -9,7 +9,8 @@ from datetime import datetime
 from unetmodel import UNet
 from datasets import get_transforms, RetinaDataset
 from utils import prepare_dataloaders
-from metrics import dice_loss, iou_score
+from metrics import dice_loss, iou_score, precision_score, recall_score
+
 import torchvision.transforms.functional as TF
 from PIL import Image
 
@@ -105,11 +106,14 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
         nonlocal best_iou
 
         print(f"\n➤ Starting training: batch_size={current_bs}, image_size={image_size}")
-        transform = get_transforms(image_size)
-        train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, transform)
+
+        train_transform = get_transforms(size=image_size, is_train=True)
+        val_transform = get_transforms(size=image_size, is_train=False)
+        
+        train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, train_transform, val_transform)
 
         model = UNet(n_channels=3, n_classes=1).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
 
         for epoch in range(epochs):
             print(f"\n🔁 Epoch {epoch + 1}/{epochs}")
@@ -123,13 +127,25 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
 
                 with torch.amp.autocast(device_type=device):
                     out = model(img)
-                    loss = dice_loss(out, mask, fov) / accumulation_steps
+                    if fov is not None:
+                        bce = nn.functional.binary_cross_entropy_with_logits(out * fov, mask * fov)
+                    else:
+                        bce = nn.functional.binary_cross_entropy_with_logits(out, mask)
+                    dice = dice_loss(out, mask, fov)
+                    loss = 0.6 * bce + 0.4 * dice
+                    loss = loss / accumulation_steps
 
                 scaler.scale(loss).backward()
 
                 if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
                     scaler.step(optimizer)
                     scaler.update()
+
+                    for name, param in model.named_parameters():
+                        writer.add_histogram(f"Weights/{name}", param, epoch)
+                        if param.grad is not None:
+                            writer.add_histogram(f"Gradients/{name}", param.grad, epoch)
+
                     optimizer.zero_grad()
 
                 cum_loss += loss.item() * accumulation_steps
@@ -140,6 +156,7 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
             # Validation
             model.eval()
             dice_scores, ious = [], []
+            precisions, recalls = [], []
             vis_logged = False
             epoch_dir = os.path.join(predictions_dir, f"epoch_{epoch + 1}")
             os.makedirs(epoch_dir, exist_ok=True)
@@ -151,11 +168,18 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
 
                     with torch.amp.autocast(device_type=device):
                         out = model(img)
+                        out_hflip = model(img.flip(-1)).flip(-1)
+                        out = (out + out_hflip) / 2
                         dice = 1 - dice_loss(out, mask, fov)
                         iou = iou_score(out, mask, fov)
+                        precision = precision_score(out, mask, fov)
+                        recall = recall_score(out, mask, fov)
 
                     dice_scores.append(dice.item())
                     ious.append(iou.item())
+                    precisions.append(precision.item())
+                    recalls.append(recall.item())
+
 
                     if idx < 5:
                         preds = torch.sigmoid(out) > 0.5
@@ -168,17 +192,25 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
                             log_images(img, mask, preds, epoch)
                             vis_logged = True
 
-            avg_dice = sum(dice_scores) / len(dice_scores)
-            avg_iou = sum(ious) / len(ious)
-            writer.add_scalar("Dice/val", avg_dice, epoch)
-            writer.add_scalar("IoU/val", avg_iou, epoch)
+                        avg_dice = sum(dice_scores) / len(dice_scores)
+                        avg_iou = sum(ious) / len(ious)
+                        avg_prec = sum(precisions) / len(precisions)
+                        avg_rec = sum(recalls) / len(recalls)
 
-            print(f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f}")
+                        writer.add_scalar("Loss/train", avg_train_loss, epoch)
+                        writer.add_scalar("Dice/val", avg_dice, epoch)
+                        writer.add_scalar("IoU/val", avg_iou, epoch)
+                        writer.add_scalar("Precision/val", avg_prec, epoch)
+                        writer.add_scalar("Recall/val", avg_rec, epoch)
+
+
+                print(f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f} | 🔍 Prec={avg_prec:.4f} | 🧠 Rec={avg_rec:.4f}")
+
 
             if avg_iou > best_iou:
                 best_iou = avg_iou
                 torch.save(model.state_dict(), os.path.join(checkpoint_dir, "unet_best.pth"))
-                print("✅ Saved new best model.")
+                print("Saved new best model.")
 
             torch.cuda.empty_cache()
 

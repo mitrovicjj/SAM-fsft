@@ -6,7 +6,7 @@ from torchvision.transforms import functional as TF
 from torch.utils.tensorboard import SummaryWriter
 from unetmodel import UNet
 from datasets import RetinaDataset, get_transforms
-from metrics import dice_loss, iou_score
+from metrics import dice_loss, iou_score, precision_score, recall_score
 from tqdm import tqdm
 from torchvision.utils import make_grid
 
@@ -29,6 +29,7 @@ def _prep_vis(t: torch.Tensor) -> torch.Tensor:
     if t.size(1) == 1:
         t = t.repeat(1, 3, 1, 1)
     return t.float()
+
 
 def test_model(run_dir, data_dir, checkpoint_path=None,
                batch_size=None, image_size=None, device="cuda",
@@ -81,10 +82,17 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     model = UNet(n_channels=3, n_classes=1).to(device)
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    try:
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    except Exception as e:
+        print(f"Error loading checkpoint: {e}")
+        return  # Exit gracefully if loading fails
+
     model.eval()
 
     dice_scores, iou_scores = [], []
+    precisions, recalls = [], []
     vis_logged = False
 
     with torch.no_grad():
@@ -96,9 +104,13 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
                 out = model(img)
                 dice = 1 - dice_loss(out, mask, fov)
                 iou = iou_score(out, mask, fov)
+                prec = precision_score(out, mask, fov)
+                rec = recall_score(out, mask, fov)
 
             dice_scores.append(dice.item())
             iou_scores.append(iou.item())
+            precisions.append(prec.item())
+            recalls.append(rec.item())
 
             preds = torch.sigmoid(out) > 0.5
 
@@ -122,11 +134,20 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
 
     mean_dice = sum(dice_scores) / len(dice_scores)
     mean_iou = sum(iou_scores) / len(iou_scores)
+    mean_prec = sum(precisions) / len(precisions)
+    mean_rec = sum(recalls) / len(recalls)
 
     if writer:
         writer.add_scalar("Test/Dice", mean_dice, 0)
         writer.add_scalar("Test/IoU", mean_iou, 0)
+        writer.add_scalar("Test/Precision", mean_prec, 0)
+        writer.add_scalar("Test/Recall", mean_rec, 0)
+        # weights histogram
+        for name, param in model.named_parameters():
+            writer.add_histogram(f"Test_Weights/{name}", param, 0)
         writer.close()
-
-    print(f"\nTest Dice Score: {mean_dice:.4f}")
-    print(f"Test IoU Score : {mean_iou:.4f}")
+        
+    print(f"\nTest Dice Score    : {mean_dice:.4f}")
+    print(f"Test IoU Score     : {mean_iou:.4f}")
+    print(f"Test Precision     : {mean_prec:.4f}")
+    print(f"Test Recall        : {mean_rec:.4f}")

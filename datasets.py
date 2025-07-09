@@ -5,12 +5,26 @@ from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-def get_transforms(size=256):
-    return A.Compose([
-        A.Resize(size, size),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ToTensorV2()
-    ])
+def get_transforms(size=256, is_train=True):
+    if is_train:
+        return A.Compose([
+            A.Resize(size, size),
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.RandomRotate90(p=0.5),
+            A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, p=0.75),
+            A.RandomBrightnessContrast(p=0.3),
+            A.ElasticTransform(p=0.2, alpha=1, sigma=50, alpha_affine=50),
+            A.GridDistortion(p=0.2),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensorV2()
+        ])
+    else:
+        return A.Compose([
+            A.Resize(size, size),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensorV2()
+        ])
 
 class RetinaDataset(Dataset):
     def __init__(self, image_dir, mask_dir, fov_dir=None, transform=None):

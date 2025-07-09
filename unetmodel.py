@@ -4,16 +4,19 @@ import torch.nn.functional as F
 
 
 class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, dropout=0.0):
         super().__init__()
-        self.double_conv = nn.Sequential(
+        layers = [
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
+            nn.InstanceNorm2d(out_channels, affine=True),
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
+            nn.InstanceNorm2d(out_channels, affine = True),
+            nn.ReLU(inplace=True)
+        ]
+        if dropout > 0:
+            layers.append(nn.Dropout2d(dropout))
+        self.double_conv = nn.Sequential(*layers)
 
     def forward(self, x):
         return self.double_conv(x)
@@ -32,14 +35,14 @@ class Down(nn.Module):
 
 
 class Up(nn.Module):
-    def __init__(self, in_channels, out_channels, bilinear=True):
+    def __init__(self, in_channels, out_channels, bilinear=True, dropout=0.0):
         super().__init__()
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels)
+            self.conv = DoubleConv(in_channels, out_channels, dropout=dropout)
         else:
             self.up = nn.ConvTranspose2d(in_channels // 2, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv(in_channels, out_channels)
+            self.conv = DoubleConv(in_channels, out_channels, dropout=dropout)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
@@ -69,16 +72,16 @@ class UNet(nn.Module):
         self.n_classes = n_classes
         self.bilinear = bilinear
 
-        self.inc = DoubleConv(n_channels, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        self.down4 = Down(512, 1024)
-        self.up1 = Up(1024 + 512, 512, bilinear)
-        self.up2 = Up(512 + 256, 256, bilinear)
-        self.up3 = Up(256 + 128, 128, bilinear)
-        self.up4 = Up(128 + 64, 64, bilinear)
-        self.outc = OutConv(64, n_classes)
+        self.inc = DoubleConv(n_channels, 32)
+        self.down1 = Down(32, 64)
+        self.down2 = Down(64, 128)
+        self.down3 = Down(128, 256)
+        self.down4 = Down(256, 512)
+        self.up1 = Up(512 + 256, 256, bilinear,dropout=0.3)
+        self.up2 = Up(256 + 128, 128, bilinear,dropout=0.2)
+        self.up3 = Up(128 + 64, 64, bilinear,dropout=0.1)
+        self.up4 = Up(64 + 32, 32, bilinear,dropout=0.0)
+        self.outc = OutConv(32, n_classes)
 
     def forward(self, x):
         x1 = self.inc(x)
