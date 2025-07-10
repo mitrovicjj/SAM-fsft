@@ -123,6 +123,10 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
 
             for step, batch in enumerate(tqdm(train_loader, desc="Training")):
                 img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
+                if mask.dim() == 3:
+                    mask = mask.unsqueeze(1)
+                if fov is not None and fov.dim() == 3:
+                    fov = fov.unsqueeze(1)
                 fov = fov.to(device) if fov is not None else None
 
                 with torch.amp.autocast(device_type=device):
@@ -164,12 +168,18 @@ def train_model(data_dir, epochs, batch_size, lr, device='cuda', log_dir=None):
             with torch.no_grad():
                 for idx, batch in enumerate(tqdm(val_loader, desc="Validating")):
                     img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
+                    if mask.dim() == 3:
+                        mask = mask.unsqueeze(1)
+                    if fov is not None and fov.dim() == 3:
+                        fov = fov.unsqueeze(1)
                     fov = fov.to(device) if fov is not None else None
+
 
                     with torch.amp.autocast(device_type=device):
                         out = model(img)
                         out_hflip = model(img.flip(-1)).flip(-1)
-                        out = (out + out_hflip) / 2
+                        out = (out + out_hflip) / 2 # Test-Time Augmentation (TTA) trick
+                                                    # making the prediction robust to left–right symmetry
                         dice = 1 - dice_loss(out, mask, fov)
                         iou = iou_score(out, mask, fov)
                         precision = precision_score(out, mask, fov)
