@@ -111,12 +111,23 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
     vis_logged = False
 
     with torch.no_grad():
-        for idx, batch in enumerate(tqdm(test_loader, desc="Testing UNet")):
+        for idx, batch in enumerate(tqdm(test_loader, desc="Testing")):
             img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
             fov = fov.to(device) if fov is not None else None
 
             with torch.amp.autocast(device_type=device):
-                out = model(img)
+                output = model(img)
+                output_hflip = model(img.flip(-1))
+
+                if model_name == "segformer":
+                    out = output.logits
+                    out_hflip = output_hflip.logits.flip(-1)
+                else:
+                    out = output
+                    out_hflip = output_hflip.flip(-1)
+
+                out = (out + out_hflip) / 2
+
                 dice = 1 - dice_loss(out, mask, fov)
                 iou = iou_score(out, mask, fov)
                 prec = precision_score(out, mask, fov)

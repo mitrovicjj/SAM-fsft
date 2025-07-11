@@ -108,4 +108,87 @@ def train_segformer(cfg_path: str, device='cuda'):
                     bce = nn.functional.binary_cross_entropy_with_logits(out * fov, mask * fov) if fov is not None \
                         else nn.functional.binary_cross_entropy_with_logits(out, mask)
                     dice = dice_loss(out, mask, fov)
-                    loss = (0.6 * bce + 0.4 * dice) / acc
+                    loss = (0.6 * bce + 0.4 * dice) / accumulation_steps
+
+                scaler.scale(loss).backward()
+
+                if (step + 1) % accumulation_steps == 0 or (step + 1) == len(train_loader):
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
+                cum_loss += loss.item() * accumulation_steps
+
+            avg_train_loss = cum_loss / len(train_loader)
+            writer.add_scalar("Loss/train", avg_train_loss, epoch)
+
+            # --- Validation ---
+            model.eval()
+            dice_scores, ious, precisions, recalls = [], [], [], []
+            vis_logged = False
+            epoch_dir = os.path.join(predictions_dir, f"epoch_{epoch + 1}")
+            os.makedirs(epoch_dir, exist_ok=True)
+
+            with torch.no_grad():
+                for idx, batch in enumerate(tqdm(val_loader, desc="Validating")):
+                    img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
+                    if mask.dim() == 3:
+                        mask = mask.unsqueeze(1)
+                    if fov is not None and fov.dim() == 3:
+                        fov = fov.unsqueeze(1)
+                    fov = fov.to(device) if fov is not None else None
+
+                    with torch.amp.autocast(device_type=device):
+                        out = model(img).logits
+                        out = torch.nn.functional.interpolate(out, size=mask.shape[2:], mode='bilinear', align_corners=False)
+                        out_hflip = model(img.flip(-1)).logits.flip(-1)
+                        out_hflip = torch.nn.functional.interpolate(out_hflip, size=mask.shape[2:], mode='bilinear', align_corners=False)
+                        out = (out + out_hflip) / 2
+
+                        dice = 1 - dice_loss(out, mask, fov)
+                        iou = iou_score(out, mask, fov)
+                        precision = precision_score(out, mask, fov)
+                        recall = recall_score(out, mask, fov)
+
+                    dice_scores.append(dice.item())
+                    ious.append(iou.item())
+                    precisions.append(precision.item())
+                    recalls.append(recall.item())
+
+                    if idx < 5:
+                        preds = torch.sigmoid(out) > 0.5
+                        for i in range(img.size(0)):
+                            TF.to_pil_image(img[i].cpu()).save(f"{epoch_dir}/img_{idx}_{i}_input.png")
+                            TF.to_pil_image(mask[i].cpu()).save(f"{epoch_dir}/img_{idx}_{i}_mask.png")
+                            TF.to_pil_image(preds[i].float().cpu()).save(f"{epoch_dir}/img_{idx}_{i}_pred.png")
+
+                        if not vis_logged:
+                            log_images(img, mask, preds, epoch)
+                            vis_logged = True
+
+            avg_dice = sum(dice_scores) / len(dice_scores)
+            avg_iou = sum(ious) / len(ious)
+            avg_prec = sum(precisions) / len(precisions)
+            avg_rec = sum(recalls) / len(recalls)
+
+            writer.add_scalar("Dice/val", avg_dice, epoch)
+            writer.add_scalar("IoU/val", avg_iou, epoch)
+            writer.add_scalar("Precision/val", avg_prec, epoch)
+            writer.add_scalar("Recall/val", avg_rec, epoch)
+
+            print(f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f} | 🔍 Prec={avg_prec:.4f} | 🧠 Rec={avg_rec:.4f}")
+
+            if avg_iou > best_iou:
+                best_iou = avg_iou
+                torch.save(model.state_dict(), os.path.join(checkpoint_dir, "segformer_best.pth"))
+                print("Saved new best model.")
+
+            torch.cuda.empty_cache()
+
+    try:
+        attempt_training(batch_size)
+    except RuntimeError as e:
+        print("Training failed:", e)
+        raise
+
+    writer.close()
