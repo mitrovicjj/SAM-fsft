@@ -33,7 +33,7 @@ def _prep_vis(t: torch.Tensor) -> torch.Tensor:
 
 def test_model(run_dir, data_dir, checkpoint_path=None,
                batch_size=None, image_size=None, device="cuda",
-               save_predictions=True, output_dir=None, log_dir=None):
+               save_predictions=True, output_dir=None, log_dir=None, model_name="unet", pretrained_model=None):
 
     # Load config.yaml if batch_size or image_size not passed explicitly
     if batch_size is None or image_size is None or (output_dir is None or log_dir is None):
@@ -56,8 +56,14 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
             output_dir = output_dir or "output/testing_preds"
             log_dir = log_dir or None
     
-    if checkpoint_path is None:
-        checkpoint_path = os.path.join(run_dir, "checkpoints", "unet_best.pth")
+        if checkpoint_path is None:
+            if model_name == "unet":
+                checkpoint_path = os.path.join(run_dir, "checkpoints", "unet_best.pth")
+            elif model_name == "segformer":
+                checkpoint_path = os.path.join(run_dir, "checkpoints", "segformer_best.pth")
+            else:
+                raise ValueError(f"Unknown model name '{model_name}' for checkpoint default.")
+
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
@@ -81,13 +87,22 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
     )
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    model = UNet(n_channels=3, n_classes=1).to(device)
+    if model_name == "unet":
+        from unetmodel import UNet
+        model = UNet(n_channels=3, n_classes=1).to(device)
+    elif model_name == "segformer":
+        from segformermodel import get_segformer_model
+        if pretrained_model is None:
+            pretrained_model = "nvidia/segformer-b0-finetuned-ade-512-512"
+        model = get_segformer_model(pretrained_model, num_labels=1).to(device)
+    else:
+        raise ValueError(f"Unknown model name '{model_name}'")
 
     try:
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     except Exception as e:
         print(f"Error loading checkpoint: {e}")
-        return  # Exit gracefully if loading fails
+        return
 
     model.eval()
 
@@ -121,7 +136,7 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
                     TF.to_pil_image(mask[i].cpu()).save(f"{output_dir}/img_{idx}_{i}_mask.png")
                     TF.to_pil_image(preds[i].float().cpu()).save(f"{output_dir}/img_{idx}_{i}_pred.png")
 
-            # Log batch to TensorBoard
+            # log batch to TensorBoard
             if writer and not vis_logged:
                 img_unnorm = unnormalize(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 img_vis = _prep_vis(img_unnorm)
