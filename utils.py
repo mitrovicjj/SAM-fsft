@@ -1,6 +1,6 @@
 import os
 from torch.utils.data import DataLoader
-from datasets import RetinaDataset, get_transforms
+from dataset import RetinaDataset, get_transforms
 
 def prepare_dataloaders(data_dir, batch_size, train_transform, val_transform):
     train_dataset = RetinaDataset(

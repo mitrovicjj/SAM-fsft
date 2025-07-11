@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import functional as TF
 from torch.utils.tensorboard import SummaryWriter
 from unetmodel import UNet
-from datasets import RetinaDataset, get_transforms
+from dataset import RetinaDataset, get_transforms
 from metrics import dice_loss, iou_score, precision_score, recall_score
 from tqdm import tqdm
 from torchvision.utils import make_grid
