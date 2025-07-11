@@ -128,6 +128,9 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
 
                 out = (out + out_hflip) / 2
 
+                if out.shape != mask.shape: # Segformer zbog downsampling slojeva smanjuje rezoluciju izlaza
+                    out = torch.nn.functional.interpolate(out, size=mask.shape[-2:], mode='bilinear', align_corners=False)
+
                 dice = 1 - dice_loss(out, mask, fov)
                 iou = iou_score(out, mask, fov)
                 prec = precision_score(out, mask, fov)
