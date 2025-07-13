@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 from datetime import datetime
 import yaml
@@ -151,6 +152,7 @@ def train_model(
 
         model = get_model(model_type, backbone, num_labels=1).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+        scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, verbose=True)
 
         # Log hyperparameters
         writer.add_hparams(
@@ -212,6 +214,7 @@ def train_model(
 
             # Validation
             model.eval()
+            val_losses = []  # <-- new list to store validation losses
             dice_scores, ious, precisions, recalls = [], [], [], []
             vis_logged = False
             epoch_dir = os.path.join(predictions_dir, f"epoch_{epoch + 1}")
@@ -239,7 +242,12 @@ def train_model(
                             out = out * fov
                             mask = mask * fov
 
-                        dice = 1 - dice_loss(out, mask)
+                        bce = nn.functional.binary_cross_entropy_with_logits(out, mask)
+                        dice_loss_val = dice_loss(out, mask)
+                        val_loss = 0.6 * bce + 0.4 * dice_loss_val
+                        val_losses.append(val_loss.item())
+
+                        dice = 1 - dice_loss_val
                         iou = iou_score(out, mask)
                         precision = precision_score(out, mask)
                         recall = recall_score(out, mask)
@@ -260,17 +268,21 @@ def train_model(
                             log_images(img, mask, preds, epoch)
                             vis_logged = True
 
+            avg_val_loss = sum(val_losses) / len(val_losses)
             avg_dice = sum(dice_scores) / len(dice_scores)
             avg_iou = sum(ious) / len(ious)
             avg_prec = sum(precisions) / len(precisions)
             avg_rec = sum(recalls) / len(recalls)
 
+            writer.add_scalar("Loss/val", avg_val_loss, epoch)
             writer.add_scalar("Dice/val", avg_dice, epoch)
             writer.add_scalar("IoU/val", avg_iou, epoch)
             writer.add_scalar("Precision/val", avg_prec, epoch)
             writer.add_scalar("Recall/val", avg_rec, epoch)
 
-            print(f"📉 Loss={avg_train_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f} | 🔍 Prec={avg_prec:.4f} | 🧠 Rec={avg_rec:.4f}")
+            scheduler.step(avg_dice)  # <-- use avg_dice (or avg_val_loss if preferred)
+
+            print(f"📉 Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f} | 🔍 Prec={avg_prec:.4f} | 🧠 Rec={avg_rec:.4f}")
 
             # Early stopping logic
             if avg_iou > best_iou:

@@ -5,3 +5,9 @@ data/
 myenv/
 .vscode/
 __pycache__/
+unettrain.py
+segtrain.py 
+segtrain-cfg.py
+unettrain-cfg.py
+insightstb.py
+plots.py
