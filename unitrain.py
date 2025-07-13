@@ -55,6 +55,7 @@ def train_model(
     epochs,
     batch_size,
     lr,
+    weight_decay=1e-5,
     device="cuda",
     log_dir=None,
     accumulation_steps=4,
@@ -149,7 +150,7 @@ def train_model(
         train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, train_transform, val_transform)
 
         model = get_model(model_type, backbone, num_labels=1).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
         # Log hyperparameters
         writer.add_hparams(
