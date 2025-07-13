@@ -99,7 +99,8 @@ def test_model(run_dir, data_dir, checkpoint_path=None,
         raise ValueError(f"Unknown model name '{model_name}'")
 
     try:
-        model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
     except Exception as e:
         print(f"Error loading checkpoint: {e}")
         return
