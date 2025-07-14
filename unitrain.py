@@ -38,9 +38,9 @@ def predict(model, img, model_type):
 # -----------------------------------------------------
 # Get model by name
 # -----------------------------------------------------
-def get_model(name, backbone, num_labels):
+def get_model(name, backbone, num_labels, **kwargs):
     if name == "segformer":
-        return get_segformer_model(backbone, num_labels)
+        return get_segformer_model(backbone, num_labels, **kwargs)
     elif name == "unet":
         return UNet(n_channels=3, n_classes=num_labels)
     else:
