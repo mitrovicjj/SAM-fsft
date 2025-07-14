@@ -6,9 +6,9 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 import matplotlib.pyplot as plt
-
 from dataset import get_transforms
 from utils import prepare_dataloaders
+from utils import prepare_test_dataloader
 from segformermodel import get_segformer_model
 from unetmodel import UNet
 from metrics import dice_loss, iou_score, precision_score, recall_score
@@ -145,7 +145,11 @@ def main():
 
     val_transform = get_transforms(size=size, is_train=False)
 
-    _, val_loader = prepare_dataloaders(args.data_dir, args.batch_size, None, val_transform)
+    val_loader = prepare_test_dataloader(
+        data_dir,
+        batch_size,
+        get_transforms(size, is_train=False)
+    )
 
     evaluate(model, val_loader, device, args.model_type, args.output_dir)
 

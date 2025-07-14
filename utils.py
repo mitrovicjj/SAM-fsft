@@ -21,3 +21,13 @@ def prepare_dataloaders(data_dir, batch_size, train_transform, val_transform):
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader
+
+def prepare_test_dataloader(data_dir, batch_size, transform):
+    dataset = RetinaDataset(
+        image_dir=os.path.join(data_dir, "images"),
+        mask_dir=os.path.join(data_dir, "masks"),
+        fov_dir=os.path.join(data_dir, "fov"),
+        transform=transform
+    )
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    return loader
