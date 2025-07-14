@@ -1,7 +1,6 @@
 """ Full assembly of the parts to form the complete network """
 
-from .unet_parts import *
-
+from unet_parts import *
 
 class UNet(nn.Module):
     def __init__(self, n_channels, n_classes, bilinear=False):
