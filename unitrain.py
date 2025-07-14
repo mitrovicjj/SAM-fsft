@@ -9,7 +9,7 @@ from datetime import datetime
 import yaml
 import json
 import torchvision.transforms.functional as TF
-from segformermodel import get_segformer_model, init_decoder_head
+from segformermodel import get_segformer_model
 from unetmodel import UNet
 from dataset import get_transforms
 from utils import prepare_dataloaders
