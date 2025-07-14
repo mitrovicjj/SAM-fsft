@@ -101,7 +101,7 @@ def evaluate(model, dataloader, device, model_type, output_dir):
     with open(os.path.join(output_dir, "metrics.json"), "w") as f:
         json.dump(results, f, indent=2)
 
-    print("\n✅ Evaluation Done!")
+    print("\n Evaluation Done!")
     print(json.dumps(results, indent=2))
 
     # Plot histograms
@@ -146,8 +146,8 @@ def main():
     val_transform = get_transforms(size=size, is_train=False)
 
     val_loader = prepare_test_dataloader(
-        data_dir,
-        batch_size,
+        args.data_dir,
+        args.batch_size,
         get_transforms(size, is_train=False)
     )
 

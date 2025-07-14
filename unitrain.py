@@ -173,8 +173,10 @@ def train_model(
 
             if epoch == freeze_backbone_epochs:
                 print(f"Unfreezing backbone weights at epoch {epoch + 1}")
-                for param in model.segformer.parameters():
-                    param.requires_grad = True
+                
+                if hasattr(model, 'segformer'):
+                    for param in model.segformer.parameters():
+                        param.requires_grad = True
 
             model.train()
             cum_loss = 0.0
