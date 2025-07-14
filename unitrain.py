@@ -9,7 +9,7 @@ from datetime import datetime
 import yaml
 import json
 import torchvision.transforms.functional as TF
-from segformermodel import get_segformer_model
+from segformermodel import get_segformer_model, init_decoder_head
 from unetmodel import UNet
 from dataset import get_transforms
 from utils import prepare_dataloaders
@@ -150,7 +150,9 @@ def train_model(
 
         train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, train_transform, val_transform)
 
-        model = get_model(model_type, backbone, num_labels=1).to(device)
+        freeze_backbone_epochs = 3
+        model = get_model(model_type, backbone, num_labels=1, freeze_backbone_epochs=freeze_backbone_epochs).to(device)
+
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, verbose=True)
 
@@ -168,6 +170,12 @@ def train_model(
 
         for epoch in range(epochs):
             print(f"\n🔁 Epoch {epoch + 1}/{epochs}")
+
+            if epoch == freeze_backbone_epochs:
+                print(f"Unfreezing backbone weights at epoch {epoch + 1}")
+                for param in model.segformer.parameters():
+                    param.requires_grad = True
+
             model.train()
             cum_loss = 0.0
             optimizer.zero_grad()
