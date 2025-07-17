@@ -44,7 +44,7 @@ def predict(model, img, model_type):
 # --------------------------
 # Main Evaluation
 # --------------------------
-def evaluate(model, dataloader, device, model_type, output_dir):
+def evaluate(model, dataloader, device, model_type, output_dir, use_fov=True):
     dice_list, iou_list, precision_list, recall_list = [], [], [], []
     os.makedirs(output_dir, exist_ok=True)
 
@@ -53,7 +53,7 @@ def evaluate(model, dataloader, device, model_type, output_dir):
 
     for idx, batch in enumerate(tqdm(dataloader, desc="Evaluating")):
         img, mask, fov = batch["image"].to(device), batch["mask"].to(device), batch["fov"]
-        
+
         if mask.dim() == 3:
             mask = mask.unsqueeze(1)
         if fov is not None and fov.dim() == 3:
@@ -69,7 +69,7 @@ def evaluate(model, dataloader, device, model_type, output_dir):
             out_hflip = F.interpolate(out_hflip, size=mask.shape[2:], mode='bilinear', align_corners=False)
             out = (out + out_hflip) / 2
 
-            if fov is not None:
+            if use_fov and fov is not None:
                 out = out * fov
                 mask = mask * fov
 

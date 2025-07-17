@@ -5,12 +5,11 @@ from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-def get_transforms(size=256, is_train=True):
-
+def get_transforms(size=256, is_train=True, use_augmentations=True):
     imagenet_mean = (0.485, 0.456, 0.406)
     imagenet_std = (0.229, 0.224, 0.225)
 
-    if is_train:
+    if is_train and use_augmentations:
         return A.Compose([
             A.Resize(size, size),
             A.HorizontalFlip(p=0.5),
@@ -39,7 +38,7 @@ class RetinaDataset(Dataset):
 
         self.image_files = sorted(os.listdir(image_dir))
         self.mask_files = sorted(os.listdir(mask_dir))
-        self.fov_files = sorted(os.listdir(fov_dir))
+        self.fov_files = sorted(os.listdir(fov_dir)) if fov_dir is not None else None
 
     def __len__(self):
         return len(self.image_files)
@@ -57,7 +56,6 @@ class RetinaDataset(Dataset):
             fov_path = os.path.join(self.fov_dir, self.fov_files[idx])
             fov = np.array(Image.open(fov_path).convert("L"))
 
-            # Compose transform for fov as additional mask
             data = {"image": image, "mask": mask, "fov": fov}
             transform = A.Compose(
                 self.transform.transforms,
@@ -70,7 +68,6 @@ class RetinaDataset(Dataset):
         if transform:
             transformed = transform(**data)
             image = transformed["image"]
-            # Convert mask and fov to binary float tensors
             mask = (transformed["mask"] > 0).float()
             if fov is not None:
                 fov = (transformed["fov"] > 0).float()
