@@ -9,11 +9,11 @@ from datetime import datetime
 import yaml
 import json
 import torchvision.transforms.functional as TF
-from segformermodel import get_segformer_model
-from unetmodel import UNet
-from dataset import get_transforms
-from utils import prepare_dataloaders
-from metrics import dice_loss, iou_score, precision_score, recall_score
+from models.segformermodel import get_segformer_model
+from models.unetmodel import UNet
+from data.dataset import get_transforms
+from data.utils import prepare_dataloaders
+from eval.metrics import dice_loss, iou_score, precision_score, recall_score
 
 # -----------------------------------------------------
 # Helper: unnormalize images for visualization
@@ -62,7 +62,8 @@ def train_model(
     accumulation_steps=4,
     patience=10,
     seed=42,
-    use_fov=True
+    use_fov=True,
+    use_augment=True
 ):
     # ---------------------
     # SEED for reproducibility
@@ -86,7 +87,6 @@ def train_model(
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(predictions_dir, exist_ok=True)
 
-    # Save parameters
     param_dict = dict(
         model_type=model_type,
         backbone=backbone,
@@ -107,12 +107,12 @@ def train_model(
     wait_counter = 0
 
     base_image_size = 512 if model_type == "segformer" else 256
-
     # -------------------------------------------------------
     # Logging helper
     # -------------------------------------------------------
-    def log_images(images, masks, preds, epoch, tag="Validation"):
+    def log_images(images, masks, preds, epoch, fov=None, tag="Validation"):
         images = unnormalize(images, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        
         def _prep(t: torch.Tensor, name: str):
             t = t.detach().cpu()
             if t.dim() == 2:
@@ -128,15 +128,17 @@ def train_model(
                 t = t.repeat(1, 3, 1, 1)
             return t.float()
 
-        grid = make_grid(
-            torch.cat([
-                _prep(images, "images"),
-                _prep(masks.float(), "masks"),
-                _prep(preds.float(), "preds")
-            ], dim=0),
-            nrow=images.size(0)
-        )
-        writer.add_image(f"{tag}/image-mask-pred", grid, epoch)
+        tensors_to_cat = [
+            _prep(images, "images"),
+            _prep(masks.float(), "masks"),
+            _prep(preds.float(), "preds"),
+        ]
+        if fov is not None:
+            tensors_to_cat.append(_prep(fov.float(), "fov"))
+
+        grid = make_grid(torch.cat(tensors_to_cat, dim=0), nrow=images.size(0))
+        writer.add_image(f"{tag}/image-mask-pred-fov", grid, epoch)
+
 
     # -------------------------------------------------------
     # Inner training function
@@ -146,8 +148,8 @@ def train_model(
 
         print(f"\n➤ Starting training: model={model_type}, backbone={backbone}, bs={current_bs}, img={current_size}")
 
-        train_transform = get_transforms(size=current_size, is_train=True)
-        val_transform = get_transforms(size=current_size, is_train=False)
+        train_transform = get_transforms(size=current_size, is_train=True, use_augmentations=use_augment)
+        val_transform = get_transforms(size=current_size, is_train=False, use_augmentations=False)
 
         train_loader, val_loader = prepare_dataloaders(data_dir, current_bs, train_transform, val_transform)
 
@@ -157,7 +159,6 @@ def train_model(
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, verbose=True)
 
-        # Log hyperparameters
         writer.add_hparams(
             {
                 "model_type": model_type,
@@ -224,11 +225,13 @@ def train_model(
 
             # Validation
             model.eval()
-            val_losses = []  # <-- new list to store validation losses
+            val_losses = []  
             dice_scores, ious, precisions, recalls = [], [], [], []
             vis_logged = False
             epoch_dir = os.path.join(predictions_dir, f"epoch_{epoch + 1}")
             os.makedirs(epoch_dir, exist_ok=True)
+
+            threshold_dice = 0.7
 
             with torch.no_grad():
                 for idx, batch in enumerate(tqdm(val_loader, desc="Validating")):
@@ -240,42 +243,60 @@ def train_model(
                     fov = fov.to(device) if fov is not None else None
 
                     with torch.amp.autocast(device_type=device):
-                        out = predict(model, img, model_type)
-                        out = torch.nn.functional.interpolate(out, size=mask.shape[2:], mode='bilinear', align_corners=False)
+                        out_raw = predict(model, img, model_type)
+                        out_raw = torch.nn.functional.interpolate(out_raw, size=mask.shape[2:], mode='bilinear', align_corners=False)
 
                         out_hflip = predict(model, img.flip(-1), model_type).flip(-1)
                         out_hflip = torch.nn.functional.interpolate(out_hflip, size=mask.shape[2:], mode='bilinear', align_corners=False)
-                        out = (out + out_hflip) / 2
+                        out_raw = (out_raw + out_hflip) / 2
 
+                        out_masked = out_raw.clone()
+                        mask_fov = mask
                         if use_fov and fov is not None:
-                            out = out * fov
-                            mask = mask * fov
+                            out_masked = out_masked * fov
+                            mask_fov = mask * fov
 
-                        bce = nn.functional.binary_cross_entropy_with_logits(out, mask)
-                        dice_loss_val = dice_loss(out, mask)
+                        bce = nn.functional.binary_cross_entropy_with_logits(out_masked, mask_fov)
+                        dice_loss_val = dice_loss(out_masked, mask_fov)
                         val_loss = 0.6 * bce + 0.4 * dice_loss_val
                         val_losses.append(val_loss.item())
 
                         dice = 1 - dice_loss_val
-                        iou = iou_score(out, mask)
-                        precision = precision_score(out, mask)
-                        recall = recall_score(out, mask)
+                        iou = iou_score(out_masked, mask_fov)
+                        precision = precision_score(out_masked, mask_fov)
+                        recall = recall_score(out_masked, mask_fov)
 
                     dice_scores.append(dice.item())
                     ious.append(iou.item())
                     precisions.append(precision.item())
                     recalls.append(recall.item())
 
+                    # Binarizovane predikcije (maskirane)
+                    preds_masked = torch.sigmoid(out_masked) > 0.5
+                    preds_raw = torch.sigmoid(out_raw) > 0.5
+                    preds_sigmoid = torch.sigmoid(out_masked)
+
                     if idx < 5:
-                        preds = torch.sigmoid(out) > 0.5
                         for i in range(img.size(0)):
                             TF.to_pil_image(img[i].cpu()).save(f"{epoch_dir}/img_{idx}_{i}_input.png")
                             TF.to_pil_image(mask[i].cpu()).save(f"{epoch_dir}/img_{idx}_{i}_mask.png")
-                            TF.to_pil_image(preds[i].float().cpu()).save(f"{epoch_dir}/img_{idx}_{i}_pred.png")
+                            TF.to_pil_image(preds_raw[i].float().cpu()).save(f"{epoch_dir}/img_{idx}_{i}_pred_raw.png")
+                            TF.to_pil_image(preds_masked[i].float().cpu()).save(f"{epoch_dir}/img_{idx}_{i}_pred_masked.png")
 
                         if not vis_logged:
-                            log_images(img, mask, preds, epoch)
+                            log_images(img, mask, preds_raw, epoch, tag="Validation/Raw")
+                            log_images(img, mask_fov, preds_masked, epoch, fov=fov, tag="Validation/Masked")
+                            # sigmoid (meke vrednosti) za nesigurnost modela
+                            writer.add_images("Validation/Preds_Sigmoid", preds_sigmoid, epoch)
                             vis_logged = True
+
+                    # Detekcija i snimanje problematicnih primjera
+                    for i in range(img.size(0)):
+                        dice_i = 1 - dice_loss(out_masked[i:i+1], mask_fov[i:i+1]).item()
+                        if dice_i < threshold_dice:
+                            TF.to_pil_image(img[i].cpu()).save(f"{epoch_dir}/hard_case_img_{idx}_{i}_input.png")
+                            TF.to_pil_image(mask[i].cpu()).save(f"{epoch_dir}/hard_case_img_{idx}_{i}_mask.png")
+                            TF.to_pil_image(preds_masked[i].float().cpu()).save(f"{epoch_dir}/hard_case_img_{idx}_{i}_pred.png")
 
             avg_val_loss = sum(val_losses) / len(val_losses)
             avg_dice = sum(dice_scores) / len(dice_scores)
@@ -289,11 +310,10 @@ def train_model(
             writer.add_scalar("Precision/val", avg_prec, epoch)
             writer.add_scalar("Recall/val", avg_rec, epoch)
 
-            scheduler.step(avg_dice)  # <-- use avg_dice (or avg_val_loss if preferred)
+            scheduler.step(avg_dice)
 
             print(f"📉 Train Loss={avg_train_loss:.4f} | Val Loss={avg_val_loss:.4f} | 🎯 Dice={avg_dice:.4f} | 📈 IoU={avg_iou:.4f} | 🔍 Prec={avg_prec:.4f} | 🧠 Rec={avg_rec:.4f}")
 
-            # Early stopping logic
             if avg_iou > best_iou:
                 best_iou = avg_iou
                 best_epoch = epoch

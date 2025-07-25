@@ -7,7 +7,6 @@ from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
-# Set style for publication-quality plots
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
@@ -19,11 +18,9 @@ class OptunaAnalyzer:
         self.unet_data = pd.read_csv(unet_csv_path)
         self.segformer_data = pd.read_csv(segformer_csv_path)
         
-        # Add model labels
         self.unet_data['model'] = 'UNet'
         self.segformer_data['model'] = 'SegFormer'
         
-        # Combine data
         self.combined_data = pd.concat([self.unet_data, self.segformer_data], ignore_index=True)
         
         # Get unique trials by grouping by hyperparameters
@@ -38,7 +35,7 @@ class OptunaAnalyzer:
         
         trial_id = 0
         for i in range(1, len(data)):
-            # Check if epoch decreased (indicating new trial)
+            # Check if epoch decreased
             if data.iloc[i]['epoch'] < data.iloc[i-1]['epoch']:
                 trial_id += 1
             data.iloc[i, data.columns.get_loc('trial_id')] = trial_id
@@ -47,7 +44,6 @@ class OptunaAnalyzer:
     
     def _get_trial_summary(self, data):
         """Extract trial-level summary statistics"""
-        # First identify individual trials
         data_with_trials = self._identify_trials(data)
         
         # Group by trial_id and hyperparameters to get unique trials
@@ -57,16 +53,14 @@ class OptunaAnalyzer:
         for name, group in trial_groups:
             trial_id, bs, lr, weightdecay, accusteps = name
             
-            # Get final epoch performance for this trial
             final_epoch = group.iloc[-1]
             
-            # Calculate convergence metrics within this trial
             best_dice = group['dice'].max()
             best_iou = group['iou'].max()
             epochs_to_90_percent = self._epochs_to_threshold(group, 'dice', 0.9 * best_dice)
             
-            # Check if early stopping occurred (epoch didn't reach expected max)
-            early_stopped = group['epoch'].max() < 25  # Assuming 25 is your max epochs
+            # Check if early stopping occurred
+            early_stopped = group['epoch'].max() < 25 # max epochs
             
             summary = {
                 'trial_id': trial_id,
@@ -102,10 +96,8 @@ class OptunaAnalyzer:
         fig, axes = plt.subplots(2, 2, figsize=figsize)
         
         if show_all_trials:
-            # Show multiple trials with transparency
             self._plot_all_trials(axes)
         else:
-            # Show only best trials
             self._plot_best_trials(axes)
         
         plt.tight_layout()

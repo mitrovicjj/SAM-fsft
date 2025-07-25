@@ -2,7 +2,7 @@ import yaml
 import torch
 import random
 import numpy as np
-from unitrain import train_model
+from train.unitrain import train_model
 
 def set_seed(seed):
     torch.manual_seed(seed)
