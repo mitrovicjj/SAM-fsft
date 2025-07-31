@@ -1,4 +1,5 @@
 import os
+import torch
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
@@ -64,10 +65,18 @@ class RetinaDatasetSAM2(Dataset):
             if fov is not None:
                 fov = (transformed["fov"] > 0).astype(np.uint8)
 
+        # Konvertuj image u float tensor i permutuј dimenzije za PyTorch: (H,W,3) -> (3,H,W)
+        image = torch.from_numpy(image).permute(2,0,1).float() / 255.0
+
+        # Konvertuj mask i fov u float tensor, dimenzije (H,W) -> (1,H,W)
+        mask = torch.from_numpy(mask).unsqueeze(0).float()
+        if fov is not None:
+            fov = torch.from_numpy(fov).unsqueeze(0).float()
+
         return {
-            "image": image,                 # uint8, shape (H,W,3)
-            "mask": mask,                   # uint8, shape (H,W)
-            "fov": fov,                     # uint8 or None
-            "original_size": original_size, # za resize nazad
+            "image": image,                 
+            "mask": mask,                   
+            "fov": fov,                     
+            "original_size": original_size, 
             "filename": self.image_files[idx]
         }
