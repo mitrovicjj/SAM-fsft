@@ -11,3 +11,9 @@ segtrain-cfg.py
 unettrain-cfg.py
 insightstb.py
 plots.py
+visuals/
+output/
+pure_visualizations/
+clean_visualizations/
+epoch_metrics_unet_new.csv
+epoch_metrics_seg_new.csv

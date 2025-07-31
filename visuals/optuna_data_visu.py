@@ -101,8 +101,9 @@ class OptunaAnalyzer:
             self._plot_best_trials(axes)
         
         plt.tight_layout()
+        plt.subplots_adjust(hspace=0.4)
         plt.show()
-        
+        '''
     def plot_convergence_analysis(self, figsize=(15, 8)):
         """Analyze convergence patterns and early stopping"""
         fig, axes = plt.subplots(2, 3, figsize=figsize)
@@ -179,9 +180,10 @@ class OptunaAnalyzer:
         axes[1,2].axis('off')
         
         plt.tight_layout()
+        plt.subplots_adjust(hspace=0.4)
         plt.show()
         
-        return fig
+        return fig'''
     
     def _plot_best_trials(self, axes):
         """Plot best trials for each model"""
@@ -228,6 +230,7 @@ class OptunaAnalyzer:
             axes[i].grid(True, alpha=0.3)
         
         plt.tight_layout()
+        plt.subplots_adjust(hspace=0.4)
         plt.show()
 
 
@@ -414,65 +417,59 @@ class OptunaAnalyzer:
         
         return fig
     
-    def plot_hyperparameter_analysis(self, figsize=(15, 12)):
-        """Analyze hyperparameter sensitivity"""
+    def plot_hyperparameter_analysis(self, figsize=(15, 12)): 
         fig, axes = plt.subplots(3, 2, figsize=figsize)
-        
-        # Learning rate vs performance
+
         for i, model in enumerate(['UNet', 'SegFormer']):
             model_data = self.all_trials[self.all_trials['model'] == model]
-            
+
             # LR vs Dice
             axes[0, i].scatter(model_data['lr'], model_data['final_dice'], 
-                              alpha=0.7, s=50, c=model_data['final_dice'], 
-                              cmap='viridis')
+                            alpha=0.7, s=50, c=model_data['final_dice'], 
+                            cmap='viridis')
             axes[0, i].set_xlabel('Learning Rate')
             axes[0, i].set_ylabel('Final Dice Score')
             axes[0, i].set_title(f'{model} - LR vs Dice')
             axes[0, i].set_xscale('log')
             axes[0, i].grid(True, alpha=0.3)
-            
-            # Batch size vs performance
+
+            # Batch Size vs Dice
             axes[1, i].scatter(model_data['bs'], model_data['final_dice'], 
-                              alpha=0.7, s=50, c=model_data['final_dice'], 
-                              cmap='viridis')
+                            alpha=0.7, s=50, c=model_data['final_dice'], 
+                            cmap='viridis')
             axes[1, i].set_xlabel('Batch Size')
             axes[1, i].set_ylabel('Final Dice Score')
             axes[1, i].set_title(f'{model} - Batch Size vs Dice')
             axes[1, i].grid(True, alpha=0.3)
-            
-            # Weight decay vs performance
+
+            # Weight Decay vs Dice
             axes[2, i].scatter(model_data['weightdecay'], model_data['final_dice'], 
-                              alpha=0.7, s=50, c=model_data['final_dice'], 
-                              cmap='viridis')
+                            alpha=0.7, s=50, c=model_data['final_dice'], 
+                            cmap='viridis')
             axes[2, i].set_xlabel('Weight Decay')
             axes[2, i].set_ylabel('Final Dice Score')
             axes[2, i].set_title(f'{model} - Weight Decay vs Dice')
             axes[2, i].set_xscale('log')
             axes[2, i].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
+
+        plt.tight_layout(rect=[0, 0, 1, 0.98]) 
+        plt.subplots_adjust(hspace=0.5, wspace=0.3)
         plt.show()
-        
+
         return fig
     
     def plot_correlation_heatmap(self, figsize=(12, 8)):
         """Create correlation heatmap between hyperparameters and performance"""
         fig, axes = plt.subplots(1, 2, figsize=figsize)
-        
-        # Prepare data for correlation
+     
         for i, model in enumerate(['UNet', 'SegFormer']):
             model_data = self.all_trials[self.all_trials['model'] == model]
             
-            # Select relevant columns
             corr_data = model_data[['lr', 'bs', 'weightdecay', 'accusteps', 
                                    'final_dice', 'final_iou', 'final_precision', 
                                    'final_recall']].copy()
             
-            # Calculate correlation matrix
             corr_matrix = corr_data.corr()
-            
-            # Create heatmap
             sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0,
                        ax=axes[i], square=True, linewidths=0.5)
             axes[i].set_title(f'{model} - Hyperparameter Correlation')
@@ -483,7 +480,7 @@ class OptunaAnalyzer:
         return fig
     
     def plot_trial_variability(self, metric='final_dice', figsize=(10, 6)):
-        """Vizualizuj raspodelu metrika po trialovima"""
+        """Vizualizacija raspodjele metrika po trialovima"""
         plt.figure(figsize=figsize)
         sns.boxplot(data=self.all_trials, x='model', y=metric, palette=['skyblue', 'lightcoral'])
         sns.stripplot(data=self.all_trials, x='model', y=metric, color='black', alpha=0.5, jitter=True)
@@ -494,7 +491,7 @@ class OptunaAnalyzer:
         plt.show()
 
     def plot_mean_std_curves(self, metric='dice', figsize=(10, 6)):
-        """Prikaz prosečne vrednosti i standardne devijacije metrika po epohama"""
+        """Prikaz prosječne vrijednosti i standardne devijacije metrika po epohama"""
         fig, ax = plt.subplots(figsize=figsize)
         for model_data, label, color in zip(
             [self.unet_data, self.segformer_data],
@@ -584,45 +581,150 @@ class OptunaAnalyzer:
         plt.tight_layout()
         plt.show()
 
-    def plot_performance_comparison(self, figsize=(12, 8)):
-        """Create box plots comparing model performance with annotations"""
-        fig, axes = plt.subplots(2, 2, figsize=figsize)
+    def plot_box_swarm(self, param='lr', metric='final_iou', bins=6, figsize=(12, 6)):
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
 
+        for i, model in enumerate(['UNet', 'SegFormer']):
+            model_data = self.all_trials[self.all_trials['model'] == model].copy()
+
+            if param in ['lr', 'weightdecay']:
+                model_data['param_bin'] = pd.qcut(model_data[param], bins, duplicates='drop')
+            else:
+                model_data['param_bin'] = model_data[param]
+
+            sns.boxplot(x='param_bin', y=metric, data=model_data, ax=axes[i], palette='pastel', showfliers=False)
+            sns.stripplot(x='param_bin', y=metric, data=model_data, ax=axes[i], color='black', alpha=0.5, jitter=0.2)
+
+            axes[i].set_title(f'{model} - {metric} across {param} bins')
+            axes[i].set_xlabel(param)
+            axes[i].set_ylabel(metric)
+            axes[i].tick_params(axis='x', rotation=45)
+            axes[i].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_box_swarm(self, param='lr', metric='final_dice', bins=6, figsize=(12, 6)):
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+        for i, model in enumerate(['UNet', 'SegFormer']):
+            model_data = self.all_trials[self.all_trials['model'] == model].copy()
+
+            if param in ['lr', 'weightdecay']:
+                model_data['param_bin'] = pd.qcut(model_data[param], bins, duplicates='drop')
+            else:
+                model_data['param_bin'] = model_data[param]
+
+            sns.boxplot(x='param_bin', y=metric, data=model_data, ax=axes[i], palette='pastel', showfliers=False)
+            sns.stripplot(x='param_bin', y=metric, data=model_data, ax=axes[i], color='black', alpha=0.5, jitter=0.2)
+
+            axes[i].set_title(f'{model} - {metric} across {param} bins')
+            axes[i].set_xlabel(param)
+            axes[i].set_ylabel(metric)
+            axes[i].tick_params(axis='x', rotation=45)
+            axes[i].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_box_swarm(self, param='bs', metric='final_iou', bins=6, figsize=(12, 6)):
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+        for i, model in enumerate(['UNet', 'SegFormer']):
+            model_data = self.all_trials[self.all_trials['model'] == model].copy()
+
+            if param in ['lr', 'weightdecay']:
+                model_data['param_bin'] = pd.qcut(model_data[param], bins, duplicates='drop')
+            else:
+                model_data['param_bin'] = model_data[param]
+
+            sns.boxplot(x='param_bin', y=metric, data=model_data, ax=axes[i], palette='pastel', showfliers=False)
+            sns.stripplot(x='param_bin', y=metric, data=model_data, ax=axes[i], color='black', alpha=0.5, jitter=0.2)
+
+            axes[i].set_title(f'{model} - {metric} across {param} bins')
+            axes[i].set_xlabel(param)
+            axes[i].set_ylabel(metric)
+            axes[i].tick_params(axis='x', rotation=45)
+            axes[i].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_box_swarm(self, param='weightdecay', metric='final_iou', bins=6, figsize=(12, 6)):
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+        for i, model in enumerate(['UNet', 'SegFormer']):
+            model_data = self.all_trials[self.all_trials['model'] == model].copy()
+
+            if param in ['lr', 'weightdecay']:
+                model_data['param_bin'] = pd.qcut(model_data[param], bins, duplicates='drop')
+            else:
+                model_data['param_bin'] = model_data[param]
+
+            sns.boxplot(x='param_bin', y=metric, data=model_data, ax=axes[i], palette='pastel', showfliers=False)
+            sns.stripplot(x='param_bin', y=metric, data=model_data, ax=axes[i], color='black', alpha=0.5, jitter=0.2)
+
+            axes[i].set_title(f'{model} - {metric} across {param} bins')
+            axes[i].set_xlabel(param)
+            axes[i].set_ylabel(metric)
+            axes[i].tick_params(axis='x', rotation=45)
+            axes[i].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_performance_comparison(self, figsize=(12, 9)):
+        """
+        Create boxplots comparing model performance
+        """
         metrics = ['final_dice', 'final_iou', 'final_precision', 'final_recall']
         titles = ['Dice Score', 'IoU', 'Precision', 'Recall']
+        colors = ['#4C72B0', '#DD8452']
+        
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
+        fig.suptitle('Model Performance Comparison', fontsize=16, weight='bold', y=0.95)
 
         for i, (metric, title) in enumerate(zip(metrics, titles)):
-            row, col = i // 2, i % 2
-
-            data_to_plot = [
+            ax = axes[i // 2, i % 2]
+            
+            data = [
                 self.unet_trials[metric].values,
                 self.segformer_trials[metric].values
             ]
 
-            bp = axes[row, col].boxplot(data_to_plot, labels=['UNet', 'SegFormer'],
-                                        patch_artist=True, notch=True)
+            sns.boxplot(data=data, ax=ax, palette=colors, width=0.5,
+                        notch=True, showfliers=False)
+            
+            ax.set_xticklabels(['UNet', 'SegFormer'], fontsize=12)
+            ax.set_ylabel(title, fontsize=12)
+            ax.set_title(f'{title} Distribution', fontsize=14)
+            ax.grid(True, alpha=0.25, linestyle='--')
 
-            colors = ['lightblue', 'lightcoral']
-            for patch, color in zip(bp['boxes'], colors):
-                patch.set_facecolor(color)
+            unet_scores = data[0]
+            seg_scores = data[1]
+            t_stat, p_value = stats.ttest_ind(unet_scores, seg_scores, equal_var=False)
+            delta = np.mean(unet_scores) - np.mean(seg_scores)
+            
+            # Significance stars
+            if p_value < 0.001:
+                sig = '***'
+            elif p_value < 0.01:
+                sig = '**'
+            elif p_value < 0.05:
+                sig = '*'
+            else:
+                sig = 'ns'
 
-            axes[row, col].set_title(f'{title} Distribution')
-            axes[row, col].set_ylabel(title)
-            axes[row, col].grid(True, alpha=0.3)
+            annotation = f'p = {p_value:.3e} {sig}\nΔ = {delta:.4f}'
+            
+            ax.text(0.98, 0.95, annotation,
+                    transform=ax.transAxes,
+                    fontsize=11,
+                    verticalalignment='top',
+                    horizontalalignment='right',
+                    bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='gray', alpha=0.9))
 
-            unet_scores = self.unet_trials[metric].values
-            segformer_scores = self.segformer_trials[metric].values
-
-            t_stat, p_value = stats.ttest_ind(unet_scores, segformer_scores)
-            delta = np.mean(unet_scores) - np.mean(segformer_scores)
-
-            annotation = f'p = {p_value:.4f}\nΔ = {delta:.4f}'
-            axes[row, col].text(0.02, 0.98, annotation,
-                                transform=axes[row, col].transAxes,
-                                verticalalignment='top',
-                                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.93])
         plt.show()
 
         return fig
@@ -695,45 +797,69 @@ class OptunaAnalyzer:
         return best_configs
 
 if __name__ == "__main__":
-    # Initialize analyzer
     analyzer = OptunaAnalyzer('epoch_metrics_unet_new.csv', 'epoch_metrics_seg_new.csv')
     
-    # Generate all visualizations
-    print("Generating training curves...")
-    analyzer.plot_training_curves()
+    # Training curves - can show all trials or best trials
+    analyzer.plot_training_curves(figsize=(15, 10), show_all_trials=False)  # Best trials
+    analyzer.plot_training_curves(figsize=(15, 10), show_all_trials=True)   # All trials
     
-    print("Generating training curves for all trials...")
-    analyzer.plot_training_curves(show_all_trials=True)
+    # Performance comparison with statistical tests
+    analyzer.plot_performance_comparison(figsize=(12, 8))
     
-    print("Generating convergence analysis...")
-    analyzer.plot_convergence_analysis()
+    # Hyperparameter analysis
+    analyzer.plot_hyperparameter_analysis(figsize=(15, 12))
     
-    print("Generating performance comparison...")
-    analyzer.plot_performance_comparison()
+    # Correlation heatmap
+    analyzer.plot_correlation_heatmap(figsize=(12, 8))
     
-    print("Generating hyperparameter analysis...")
-    analyzer.plot_hyperparameter_analysis()
+    # Partial dependence plots for different parameters and metrics
+    analyzer.plot_partial_dependence(param='lr', metric='final_dice', bins=10)
+    analyzer.plot_partial_dependence(param='bs', metric='final_dice', bins=10)
+    analyzer.plot_partial_dependence(param='weightdecay', metric='final_dice', bins=10)
+    analyzer.plot_partial_dependence(param='accusteps', metric='final_dice', bins=10)
     
-    print("Generating correlation heatmap...")
-    analyzer.plot_correlation_heatmap()
-
-     # Partial dependence za IOU po learning rate
+    # IoU partial dependence (specific method)
     analyzer.plot_partial_dependence_iou(param='lr', bins=10)
-
-    # Heatmap kombinacija dva hiperparametra
+    analyzer.plot_partial_dependence_iou(param='bs', bins=10)
+    analyzer.plot_partial_dependence_iou(param='weightdecay', bins=10)
+    analyzer.plot_partial_dependence_iou(param='accusteps', bins=10)
+    
+    # Heatmap for hyperparameter combinations
     analyzer.plot_heatmap_hyperparam_combinations(param1='lr', param2='weightdecay', metric='final_dice')
+    analyzer.plot_heatmap_hyperparam_combinations(param1='lr', param2='bs', metric='final_dice')
+    analyzer.plot_heatmap_hyperparam_combinations(param1='bs', param2='weightdecay', metric='final_dice')
+    
+    # Trial variability analysis
+    analyzer.plot_trial_variability(metric='final_dice', figsize=(10, 6))
+    analyzer.plot_trial_variability(metric='final_iou', figsize=(10, 6))
+    analyzer.plot_trial_variability(metric='final_precision', figsize=(10, 6))
+    analyzer.plot_trial_variability(metric='final_recall', figsize=(10, 6))
+    
+    # Mean and standard deviation curves across epochs
+    analyzer.plot_mean_std_curves(metric='dice', figsize=(10, 6))
+    analyzer.plot_mean_std_curves(metric='iou', figsize=(10, 6))
+    analyzer.plot_mean_std_curves(metric='precision', figsize=(10, 6))
+    analyzer.plot_mean_std_curves(metric='recall', figsize=(10, 6))
+    
+    # Radar performance chart
+    analyzer.plot_radar_performance()
+    
+    # Violin plots for metric variability
+    analyzer.plot_violin_metric_variability(param='lr', metric='final_dice', bins=6, figsize=(12, 6))
+    analyzer.plot_violin_metric_variability(param='bs', metric='final_dice', bins=6, figsize=(12, 6))
+    analyzer.plot_violin_metric_variability(param='weightdecay', metric='final_dice', bins=6, figsize=(12, 6))
+    analyzer.plot_violin_metric_variability(param='accusteps', metric='final_dice', bins=6, figsize=(12, 6))
+    
+    # Box and swarm plots
+    analyzer.plot_box_swarm(param='lr', metric='final_dice', bins=6, figsize=(12, 6))
+    analyzer.plot_box_swarm(param='bs', metric='final_iou', bins=6, figsize=(12, 6))
+    analyzer.plot_box_swarm(param='weightdecay', metric='final_iou', bins=6, figsize=(12, 6))
+    analyzer.plot_box_swarm(param='accusteps', metric='final_dice', bins=6, figsize=(12, 6))
 
-    # General partial dependence za batch size i preciznost
-    analyzer.plot_partial_dependence(param='bs', metric='final_precision', bins=5)
 
-    # Violin plot varijabilnosti final_dice po learning rate binovima
-    analyzer.plot_violin_metric_variability(param='lr', metric='final_dice', bins=6)
-
-    # Generate summary table
     print("\nPerformance Summary:")
     print(analyzer.generate_performance_table().to_string(index=False))
     
-    # Statistical tests
     print("\nStatistical Tests:")
     stats_results = analyzer.perform_statistical_tests()
     for test, result in stats_results.items():
@@ -742,7 +868,6 @@ if __name__ == "__main__":
         else:
             print(f"{test}: {result}")
     
-    # Best hyperparameters
     print("\nBest Hyperparameters:")
     best_configs = analyzer.get_best_hyperparameters()
     for model, config in best_configs.items():
