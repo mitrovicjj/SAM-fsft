@@ -1,4 +1,5 @@
 import os
+import torch
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
@@ -40,7 +41,8 @@ class RetinaDatasetSAM(Dataset):
         image_path = os.path.join(self.image_dir, self.image_files[idx])
         mask_path = os.path.join(self.mask_dir, self.mask_files[idx])
 
-        image = np.array(Image.open(image_path).convert("RGB"))  # (H,W,3), uint8
+        image = np.array(Image.open(image_path).convert("RGB"))
+        image = torch.from_numpy(image).permute(2,0,1).float() / 255.0
         mask = np.array(Image.open(mask_path).convert("L"))      # (H,W), 0/255
         original_size = image.shape[:2]  # (H, W)
 
