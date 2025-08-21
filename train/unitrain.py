@@ -155,7 +155,7 @@ def train_model(
         model = get_model(model_type, backbone, num_labels=1, freeze_backbone_epochs=freeze_backbone_epochs).to(device)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-        scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, verbose=True)
+        scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
 
         # Log hyperparameters
         writer.add_hparams(
