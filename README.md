@@ -1,177 +1,115 @@
 # Retinal Vessel Segmentation: A Comparative Study
 
-A comprehensive evaluation of different approaches to retinal blood vessel segmentation on the DRIVE dataset, comparing classical CNN architectures, modern transformer-based models, and zero-shot segmentation capabilities.
+A comprehensive evaluation of different approaches to retinal blood vessel segmentation on the DRIVE dataset, comparing classical CNN architectures and modern transformer-based models under limited data and resource constraints.
 
-## Project overview
+## Project Overview
 
-This project investigates the effectiveness of different segmentation approaches for retinal blood vessel detection, addressing the critical question: **Can modern zero-shot models like SAM compete with task-specific trained models in medical image segmentation?**
+This project investigates the effectiveness of **UNet** and **SegFormer-B0** for retinal blood vessel segmentation, with special focus on:
 
-## Project structure
+- Training under **limited GPU and dataset constraints** (Google Colab Pro, 16GB T4 GPU, DRIVE dataset of 40 images).  
+- Impact of hyperparameter optimization, data augmentations and FOV masking.  
+- Quantitative vs. qualitative trade-offs: metric performance vs. morphological continuity of vessels.  
 
-```
-sam-fsft/
-├── configs/                              # Model configurations (for running from CLI)
-│   ├── unet_bs1_lr0.0001_ep40.yaml
-│   ├── segformer_bs1_lr5e-5_ep40.yaml
-│   └── ...
-├── runs/                                 # Auto-generated experiments
-│   ├── unet_bs1_lr0.0001_ep40_20250708_122926/
-│   │   ├── checkpoints/
-│   │   ├── test_predictions/
-│   │   └── tensorboard/
-│   └── segformer_bs1_lr5e-5_ep40_20250710_105500/
-├── dataset.py                           # Data loading and preprocessing
-├── metrics.py                            # Evaluation metrics (IoU, Dice, precision and recall scores)
-├── utils.py                              # Utility functions
-├── unetmodel.py                          # UNet architecture
-├── segformer_model.py                    # SegFormer wrapper
-├── unitrain.py                           # universal training script (accepts model as kwarg)
-├── evaluate.py                           # Model testing script
-└── requirements.txt
-```
 
-### Key research questions
-- How does the zero-shot Segment Anything Model (SAM) perform on retinal vessel segmentation without additional training?
-- What are the performance differences between classical CNN architectures (UNet) and modern transformer-based models (SegFormer)?
-- Are SAM's zero-shot capabilities sufficient for medical imaging applications where training data is limited?
+## Key Research Questions
 
-## Architecture and models
+- How do CNN-based (UNet) and transformer-based (SegFormer-B0) models behave under limited resources?  
+- What is the impact of augmentations and FOV masking on segmentation quality?  
+- Do models that score higher on Dice/IoU always preserve clinically relevant morphology?  
 
-### 1. UNet (Implemented)
-- **From-scratch implementation** without pre-trained encoders
-- Symmetric encoder-decoder architecture with skip connections
-- Dice loss with FOV masking
-- **Current Results**: Dice Score: 0.3585, IoU: 0.5787
+## Architectures and Models
 
-### 2. SegFormer (Implemented)
-- Transformer-based encoder (SegFormer-B0) with lightweight MLP decoder
-- Efficient attention mechanism for dense prediction
-- Fine-tuned with frozen encoder warmup phase (3 epochs).
-- - **Current Results**: Dice Score: 0.3669, IoU: 0.5972
+### 1. UNet
+- Implementation from `segmentation_models_pytorch` with modifications:
+  - Initial filters reduced (32 → 64 standard).
+  - `InstanceNorm2d` instead of BatchNorm (stability with small batches).
+  - `Dropout2d` in decoder with linear decay (0.3 → 0.0).
+- **Training**: Hybrid loss (0.6 × BCE + 0.4 × Dice), Adam optimizer, LR scheduler.  
+- **Results**: Lower Dice/IoU than SegFormer, but better at preserving vascular continuity.
 
-### 3. Segment Anything Model (SAM) (In progress)
-- Zero-shot evaluation without additional training
-- Multiple prompting strategies (bounding box, point, grid sampling)
-- Performance comparison with trained models
+### 2. SegFormer-B0
+- Transformer encoder + lightweight MLP decoder (HuggingFace pretrained `nvidia/segformer-b0`).  
+- Adaptations:
+  - Replaced classification head with binary segmentation head (Xavier initialization).  
+  - Encoder frozen for first 3 epochs (warm-up).  
+  - Auxiliary head included for improved gradient flow.  
+- **Results**: Higher Dice/IoU and more stable across trials, but tends to miss thin vessels and lose morphological continuity.  
+
+---
 
 ## Dataset
 
-**DRIVE Dataset** - Standard benchmark for retinal vessel segmentation
-- 40 high-resolution retinal images (30\5\5)
-- Manual vessel annotations and Field of View (FOV) masks
-- Images scaled accordingly for training
-- Evaluation performed only within FOV regions
+**DRIVE Dataset**  
+- 40 RGB images (584×565), including 7 abnormal pathology cases.  
+- Train/val/test split: 30 / 5 / 5.  
+- High class imbalance (~10% vessel pixels).  
+- Evaluation restricted to **FOV regions**.  
 
+Augmentations (Albumentations): flips, rotations, brightness/contrast shifts, elastic distortions.  
+
+---
 
 ## Performance Summary (15 Trials, FOV-Masked)
 
-| Model     | Dice (Mean±SD)   | IoU (Mean±SD)    | Precision (Mean±SD) | Recall (Mean±SD)  | Best Dice | Best IoU |
-|-----------|------------------|------------------|----------------------|-------------------|-----------|----------|
-| UNet      | 0.2922 ± 0.0491  | 0.4900 ± 0.0516  | 0.6314 ± 0.0533      | 0.6856 ± 0.0436   | 0.3585    | 0.5787   |
-| SegFormer | 0.3379 ± 0.0406  | 0.5540 ± 0.0638  | 0.7335 ± 0.0404      | 0.6953 ± 0.0764   | 0.3669    | 0.5972   |
+| Model     | Dice (Mean±SD)   | IoU (Mean±SD)    | Precision (Mean) | Recall (Mean)  | Best Dice | Best IoU |
+|-----------|------------------|------------------|------------------|----------------|-----------|----------|
+| UNet      | 0.292 ± 0.049    | 0.490 ± 0.052    | 0.631            | 0.686          | 0.359     | 0.579    |
+| SegFormer | 0.338 ± 0.041    | 0.554 ± 0.064    | 0.734            | 0.695          | 0.367     | 0.597    |
+
+**Findings**:  
+- **SegFormer-B0** outperforms UNet in Dice, IoU, and stability.  
+- **UNet** maintains vascular continuity better (thin vessels, bifurcations).  
+- **Augmentations** did **not** improve performance (sometimes decreased it).  
+- **FOV masking** had a positive impact by reducing noise.  
+
+---
 
 ## Best Hyperparameters from Optuna
 
 | Model     | LR        | Weight Decay | Batch Size | Acc. Steps | Final Dice | Final IoU |
-|-----------|-----------|--------------|------------|-------------|-------------|------------|
-| UNet      | 6.34e-4   | 2.18e-4      | 1          | 1           | 0.3585      | 0.5736     |
-| SegFormer | 4.84e-4   | 1.15e-6      | 1          | 1           | 0.3669      | 0.5972     |
+|-----------|-----------|--------------|------------|-------------|------------|-----------|
+| UNet      | 6.34e-4   | 2.18e-4      | 1          | 1           | 0.359      | 0.574     |
+| SegFormer | 4.84e-4   | 1.15e-6      | 1          | 1           | 0.367      | 0.597     |
 
 ---
 
 ## Training & Evaluation Details
 
-### Hybrid Loss
-Loss = 0.6 × BCE + 0.4 × Dice
-
-- Encourages both pixel-wise precision and region overlap  
-- Computed **only within FOV region** to exclude background
-
-### Gradient Accumulation
-
-- Simulates large batch sizes under memory constraints  
-- Effective batch size = 4 via accumulation
-
-### Mixed Precision
-
-- Enabled via `torch.cuda.amp` + `GradScaler`  
-- Faster training and reduced VRAM usage
-
-### Test-Time Augmentation
-
-- Horizontal flip → inference averaged across original + flipped input
+- **Hybrid loss**: `0.6 × BCE + 0.4 × Dice`, restricted to FOV.  
+- **Gradient accumulation**: Effective batch size = 4.  
+- **Mixed precision**: `torch.cuda.amp` for VRAM efficiency.  
+- **Early stopping**: Patience = 10 epochs.  
+- **LR scheduler**: ReduceLROnPlateau.  
+- **Evaluation**: Dice, IoU, Precision, Recall + qualitative visual inspection.  
 
 ---
 
-## Model-Specific Design Choices
+## Key Insights
 
-### UNet
-
-- `InstanceNorm` used for small batch sizes  
-- Bilinear interpolation for upsampling (no transposed conv)  
-- `Dropout2d` in decoder: linearly decreased (0.3 → 0.0)  
-- Manual `F.pad` for skip-connection alignment
-
-### SegFormer
-
-- Encoder: **SegFormer-B0 (pretrained)**  
-- **Warmup**: Encoder frozen for first 3 epochs  
-- Bilinear upsampling to match output size  
-- Optimizer: **AdamW + linear LR scheduler**
+- **SegFormer-B0**: better numeric performance, lower variance, robust to weight decay.  
+- **UNet**: worse metrics, but better **morphological integrity** → relevant for clinical use.  
+- **FOV masking**: essential.  
+- **Augmentations**: neutral or negative effect under small batch sizes.  
 
 ---
-
-## Evaluation Protocol
-
-- FOV-masked per-pixel metrics: *Dice, IoU, Precision, Recall*
-- Logged to TensorBoard:
-  - Loss curves
-  - Prediction samples
-  - Weight/grad histograms
-
-### Reproducibility
-
-```python
-torch.manual_seed(42)
-torch.backends.cudnn.deterministic = True
-```
-
-### Experiment tracking
-- **TensorBoard**: Real-time training monitoring
-- **Automatic logging**: All experiments saved with timestamps
-- **Reproducible configs**: YAML-based configuration management
-
-### Comparisons
-- **Quantitative**: IoU, Dice coefficient, precision/recall
-- **Qualitative**: Visual inspection of segmentation quality
-- **Computational**: Training time, inference speed, memory usage
-
-## Academic context
-
-This project serves dual purposes:
-- **Neural Networks Course**: Deep dive into architecture design, training strategies, and performance optimization
-- **Technologies and Tools in ML Course**: Focus on experiment tracking, model evaluation pipelines, and deployment considerations
 
 ## Future Work
 
-- [ ] Implement SAM zero-shot evaluation with multiple prompting strategies
-- [ ] Model deployment pipeline (FastAPI + Docker)
-
-## References
-
-- **DRIVE Dataset**: Staal, J., et al. "Ridge-based vessel segmentation in color images of the retina." *IEEE TMI* (2004)
-- **UNet**: Ronneberger, O., et al. "U-Net: Convolutional Networks for Biomedical Image Segmentation." *MICCAI* (2015)
-- **SegFormer**: Xie, E., et al. "SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers." *NeurIPS* (2021)
-- **SAM**: Kirillov, A., et al. "Segment Anything." *ICCV* (2023)
-
-## Contributing
-
-This is an academic project, but suggestions and discussions are welcome! Feel free to open issues or reach out with questions.
-
-## License
-
-This project is for educational purposes. Please respect the original dataset licenses and model usage terms.
+- [ ] Integrate **SAM** for zero-shot evaluation and compare with trained models.  
+- [ ] Explore **topology-aware loss functions** (Tversky, focal, unified focal loss).  
+- [ ] Use **larger pretrained backbones** (Swin Transformer, medical-domain pretrained).  
+- [ ] Ensemble methods for improved robustness.  
+- [ ] Cross-validation to mitigate dependence on a single split.  
 
 ---
 
-*Developed as part of Neural Networks and MLOps coursework, focusing on the intersection of classical and modern approaches to medical image segmentation.*
+## References
+
+- Staal et al., DRIVE dataset.  
+- Ronneberger et al., UNet.  
+- Xie et al., SegFormer.  
+- Additional references from the experimental study (Albumentations, Optuna, topology-aware losses).  
+
+---
+
+*Developed as part of coursework in Neural Networks and MLOps, focusing on efficient model training and evaluation under constrained conditions.*  
