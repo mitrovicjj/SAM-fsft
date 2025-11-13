@@ -6,7 +6,7 @@ A comprehensive evaluation of different approaches to retinal blood vessel segme
 
 This project investigates the effectiveness of **UNet** and **SegFormer-B0** for retinal blood vessel segmentation, with special focus on:
 
-- Training under **limited GPU and dataset constraints** (Google Colab Pro, 16GB T4 GPU, DRIVE dataset of 40 images).  
+- Training under limited GPU and dataset constraints (Google Colab Pro, 16GB T4 GPU, DRIVE dataset of 40 images).  
 - Impact of hyperparameter optimization, data augmentations and FOV masking.  
 - Quantitative vs. qualitative trade-offs: metric performance vs. morphological continuity of vessels.  
 
@@ -43,7 +43,7 @@ This project investigates the effectiveness of **UNet** and **SegFormer-B0** for
 - 40 RGB images (584×565), including 7 abnormal pathology cases.  
 - Train/val/test split: 30 / 5 / 5.  
 - High class imbalance (~10% vessel pixels).  
-- Evaluation restricted to **FOV regions**.  
+- Evaluation restricted to FOV regions.  
 
 Augmentations (Albumentations): flips, rotations, brightness/contrast shifts, elastic distortions.  
 
@@ -59,7 +59,7 @@ Augmentations (Albumentations): flips, rotations, brightness/contrast shifts, el
 **Findings**:  
 - **SegFormer-B0** outperforms UNet in Dice, IoU, and stability.  
 - **UNet** maintains vascular continuity better (thin vessels, bifurcations).  
-- **Augmentations** did **not** improve performance (sometimes decreased it).  
+- **Augmentations** did not improve performance (sometimes decreased it).  
 - **FOV masking** had a positive impact by reducing noise.  
 
 ---
@@ -87,7 +87,7 @@ Augmentations (Albumentations): flips, rotations, brightness/contrast shifts, el
 ## Key Insights
 
 - **SegFormer-B0**: better numeric performance, lower variance, robust to weight decay.  
-- **UNet**: worse metrics, but better **morphological integrity** → relevant for clinical use.  
+- **UNet**: worse metrics, but better morphological integrity - relevant for clinical use.  
 - **FOV masking**: essential.  
 - **Augmentations**: neutral or negative effect under small batch sizes.  
 
@@ -95,11 +95,19 @@ Augmentations (Albumentations): flips, rotations, brightness/contrast shifts, el
 
 ## Future Work
 
-- [ ] Integrate **SAM** for zero-shot evaluation and compare with trained models.  
-- [ ] Explore **topology-aware loss functions** (Tversky, focal, unified focal loss).  
-- [ ] Use **larger pretrained backbones** (Swin Transformer, medical-domain pretrained).  
-- [ ] Ensemble methods for improved robustness.  
-- [ ] Cross-validation to mitigate dependence on a single split.  
+- [x] **Integrate SAM for zero-shot evaluation and compare with trained models**  
+  - Implemented *Segment Anything Model (SAM)* as a foundation model baseline for retinal vessel segmentation.  
+  - The approach was evaluated in a zero-shot setting - without additional training on the DRIVE dataset.  
+  - Prompts were defined using positive and negative points along visible vessels, with iterative refinement by adding new points after visual inspection.  
+  - Although SAM successfully identifies regions within the field of view, the predicted masks often cover large retinal areas and fail to follow fine vascular branching.  
+  - Results indicate high recall but low precision, making SAM clinically irrelevant without fine-tuning or adaptation to the medical domain (e.g., *MedSAM*).  
+  - This confirms that foundation models have limited transferability to thin anatomical structures, but opens space for future work in prompt engineering and domain adaptation approaches.
+    
+- [ ] Explore topology-aware loss functions (Tversky, focal, unified focal loss)  
+- [ ] Use larger pretrained backbones (Swin Transformer, medical-domain pretrained)  
+- [ ] Develop ensemble methods for improved robustness  
+- [ ] Apply cross-validation to mitigate dependence on a single split  
+
 
 ---
 
